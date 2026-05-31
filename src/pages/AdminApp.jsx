@@ -1,6 +1,6 @@
 // src/pages/AdminApp.jsx  –  Admin panel wired to Supabase
 import { useState, useEffect } from "react";
-import { supabase, adminProcessWithdrawal } from "../lib/supabase";
+import { supabase, adminApproveWithdrawal, adminRejectWithdrawal, adminSuspendUser, adminVerifyBusiness, adminCreateTask, adminToggleTask, adminSaveSettings } from "../lib/supabase";
 
 const fmt = (n) => "UGX " + Number(n).toLocaleString();
 
@@ -128,58 +128,68 @@ export default function AdminApp() {
 
   const handleApprove = async (id) => {
     try {
-      await adminProcessWithdrawal(id);
+      await adminApproveWithdrawal(id);
       showToast("Withdrawal approved & sent via LivePay ✓");
       loadWithdrawals(); loadStats();
     } catch (e) { showToast(e.message, "error"); }
   };
 
   const handleReject = async (id) => {
-    const { error } = await supabase.from("withdrawals").update({ status: "rejected" }).eq("id", id);
-    if (!error) {
-      // Refund user
-      await supabase.rpc("refund_withdrawal", { p_withdrawal_id: id });
+    try {
+      await adminRejectWithdrawal(id);
       showToast("Withdrawal rejected & balance refunded");
       loadWithdrawals(); loadStats();
-    }
+    } catch (e) { showToast(e.message, "error"); }
   };
 
   const handleSuspendUser = async (id, currentStatus) => {
-    const newStatus = currentStatus === "suspended" ? "active" : "suspended";
-    await supabase.from("profiles").update({ status: newStatus }).eq("id", id);
-    showToast("User status updated");
-    loadUsers();
+    try {
+      const newStatus = currentStatus === "suspended" ? "active" : "suspended";
+      await adminSuspendUser(id, newStatus);
+      showToast("User status updated");
+      loadUsers();
+    } catch (e) { showToast(e.message, "error"); }
   };
 
   const handleVerifyBusiness = async (id) => {
-    await supabase.from("businesses").update({ verified: true }).eq("id", id);
-    showToast("Business verified ✓");
-    loadBusinesses();
+    try {
+      await adminVerifyBusiness(id);
+      showToast("Business verified ✓");
+      loadBusinesses();
+    } catch (e) { showToast(e.message, "error"); }
   };
 
   const handleToggleTask = async (id, currentStatus) => {
-    const newStatus = currentStatus === "active" ? "paused" : "active";
-    await supabase.from("tasks").update({ status: newStatus }).eq("id", id);
-    showToast("Task status updated");
-    loadTasks();
+    try {
+      const newStatus = currentStatus === "active" ? "paused" : "active";
+      await adminToggleTask(id, newStatus);
+      showToast("Task status updated");
+      loadTasks();
+    } catch (e) { showToast(e.message, "error"); }
   };
 
   const handleSaveSettings = async (newSettings) => {
-    const updates = Object.entries(newSettings).map(([key, value]) => ({ key, value: String(value) }));
-    const { error } = await supabase.from("settings").upsert(updates);
-    if (!error) showToast("Settings saved ✓");
-    else showToast("Save failed", "error");
+    try {
+      await adminSaveSettings(newSettings);
+      showToast("Settings saved ✓");
+    } catch (e) { showToast(e.message ?? "Save failed", "error"); }
   };
 
   const handleCreateTask = async (formData) => {
-    const { error } = await supabase.from("tasks").insert({
-      title: formData.title, business: formData.business, type: formData.type,
-      icon: formData.icon, reward: parseInt(formData.reward), budget: parseInt(formData.budget),
-      limit_count: parseInt(formData.limit), category: formData.category ?? "social",
-      color: "#E1F5EE", text_color: "#0F6E56", time_est: "5 min",
-    });
-    if (!error) { showToast("Task created ✓"); setTaskModal(false); loadTasks(); }
-    else showToast(error.message, "error");
+    try {
+      await adminCreateTask({
+        title: formData.title, business: formData.business, type: formData.type,
+        subtype: formData.subtype || null,
+        link: formData.link || null,
+        duration_seconds: parseInt(formData.duration_seconds) || 60,
+        icon: formData.icon, reward: parseInt(formData.reward), budget: parseInt(formData.budget),
+        limit_count: parseInt(formData.limit), category: formData.type,
+        color: "#E1F5EE", text_color: "#0F6E56", time_est: `${Math.ceil((parseInt(formData.duration_seconds)||60)/60)} min`,
+      });
+      showToast("Task created ✓");
+      setTaskModal(false);
+      loadTasks();
+    } catch (e) { showToast(e.message, "error"); }
   };
 
   const filteredUsers = users.filter(u =>
@@ -498,33 +508,59 @@ function SettingsTab({ settings, onSave }) {
   useEffect(() => setForm(settings), [settings]);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  const [saving, setSaving] = useState(false);
+  const [saved,  setSaved]  = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(form);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
   return (
     <div style={{ animation: "slideUp 0.3s ease", maxWidth: 600 }}>
+
       <div style={A.card}>
+        <div style={A.cardTitle}>Activation & deposits</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+          <div><label style={A.label}>Activation fee (UGX)</label><input style={A.input} type="number" value={form.activation_fee ?? ""} onChange={e => set("activation_fee", e.target.value)} /></div>
+          <div><label style={A.label}>Referral bonus on activation (UGX)</label><input style={A.input} type="number" value={form.ref1_rate ?? ""} onChange={e => set("ref1_rate", e.target.value)} /></div>
+          <div><label style={A.label}>Min deposit (UGX)</label><input style={A.input} type="number" value={form.min_deposit ?? ""} onChange={e => set("min_deposit", e.target.value)} /></div>
+          <div><label style={A.label}>Deposit platform fee (%)</label><input style={A.input} type="number" value={form.deposit_fee_pct ?? ""} onChange={e => set("deposit_fee_pct", e.target.value)} /></div>
+        </div>
+      </div>
+
+      <div style={{ ...A.card, marginTop: 16 }}>
         <div style={A.cardTitle}>Withdrawal limits</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
           <div><label style={A.label}>Min withdrawal (UGX)</label><input style={A.input} type="number" value={form.min_withdrawal ?? ""} onChange={e => set("min_withdrawal", e.target.value)} /></div>
           <div><label style={A.label}>Max withdrawal (UGX)</label><input style={A.input} type="number" value={form.max_withdrawal ?? ""} onChange={e => set("max_withdrawal", e.target.value)} /></div>
+          <div style={{ gridColumn:"1/-1" }}>
+            <label style={A.label}>Withdrawal window</label>
+            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+              <input style={{ ...A.input, width:"auto", flex:1 }} type="time" value={form.withdraw_open ?? "07:00"} onChange={e => set("withdraw_open", e.target.value)} />
+              <span style={{ color:"#888", fontSize:13 }}>to</span>
+              <input style={{ ...A.input, width:"auto", flex:1 }} type="time" value={form.withdraw_close ?? "19:00"} onChange={e => set("withdraw_close", e.target.value)} />
+            </div>
+          </div>
         </div>
       </div>
+
       <div style={{ ...A.card, marginTop: 16 }}>
-        <div style={A.cardTitle}>Referral commission rates (%)</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginTop: 16 }}>
-          <div><label style={A.label}>Level 1 (direct)</label><input style={A.input} type="number" value={form.ref1_rate ?? ""} onChange={e => set("ref1_rate", e.target.value)} /></div>
-          <div><label style={A.label}>Level 2</label><input style={A.input} type="number" value={form.ref2_rate ?? ""} onChange={e => set("ref2_rate", e.target.value)} /></div>
-          <div><label style={A.label}>Level 3</label><input style={A.input} type="number" value={form.ref3_rate ?? ""} onChange={e => set("ref3_rate", e.target.value)} /></div>
-        </div>
-      </div>
-      <div style={{ ...A.card, marginTop: 16 }}>
-        <div style={A.cardTitle}>Rewards & platform fee</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginTop: 16 }}>
+        <div style={A.cardTitle}>Rewards</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
           <div><label style={A.label}>Sign-up bonus (UGX)</label><input style={A.input} type="number" value={form.signup_bonus ?? ""} onChange={e => set("signup_bonus", e.target.value)} /></div>
           <div><label style={A.label}>7-day streak bonus (UGX)</label><input style={A.input} type="number" value={form.streak_bonus ?? ""} onChange={e => set("streak_bonus", e.target.value)} /></div>
           <div><label style={A.label}>Platform fee on tasks (%)</label><input style={A.input} type="number" value={form.platform_fee ?? ""} onChange={e => set("platform_fee", e.target.value)} /></div>
         </div>
       </div>
-      <button style={{ ...A.primaryBtn, marginTop: 20, width: "auto", padding: "12px 32px" }} onClick={() => onSave(form)}>
-        Save settings
+
+      <button style={{ ...A.primaryBtn, marginTop: 20, width: "auto", padding: "12px 32px", opacity: saving ? 0.7 : 1 }} onClick={handleSave} disabled={saving}>
+        {saving ? "Saving..." : saved ? "Saved ✓" : "Save settings"}
       </button>
     </div>
   );
@@ -532,38 +568,100 @@ function SettingsTab({ settings, onSave }) {
 
 // ── Create Task Modal ─────────────────────────────────────────
 function CreateTaskModal({ onClose, onCreate, businesses }) {
-  const [form, setForm] = useState({ title: "", business: "", type: "social", category: "social", reward: "", budget: "", limit: "", icon: "📱" });
+  const [form, setForm] = useState({ title: "", business: "", type: "youtube_watch", subtype: "", link: "", duration_seconds: 60, reward: "", budget: "", limit: "", icon: "▶️" });
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const typeIcons = { youtube_watch: "▶️", youtube_subscribe: "📺", tiktok: "🎵", social: "📱", survey: "📋", install: "⬇️", review: "⭐" };
+
+  const handleCreate = async () => {
+    setErr("");
+    if (!form.title)    return setErr("Task title is required");
+    if (!form.business) return setErr("Select a business");
+    if (!form.reward)   return setErr("Reward amount is required");
+    if (!form.budget)   return setErr("Budget is required");
+    if (!form.limit)    return setErr("Max completions is required");
+    if ((form.type === "youtube_watch" || form.type === "youtube_subscribe" || form.type === "tiktok") && !form.link)
+      return setErr("Link is required for this task type");
+    setLoading(true);
+    try {
+      await onCreate({ ...form, icon: typeIcons[form.type] ?? form.icon, category: form.type });
+    } catch (e) {
+      setErr(e.message ?? "Failed to create task");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isTimed   = ["youtube_watch","youtube_subscribe","tiktok"].includes(form.type);
+  const isTiktok  = form.type === "tiktok";
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300 }} onClick={onClose}>
-      <div style={{ background: "white", borderRadius: 20, padding: 28, width: 480, animation: "slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
+      <div style={{ background: "white", borderRadius: 20, padding: 28, width: 500, animation: "slideUp 0.3s ease", margin: "auto" }} onClick={e => e.stopPropagation()}>
         <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 20 }}>Create new task</div>
+        {err && <div style={{ background: "#FAECE7", color: "#993C1D", borderRadius: 8, padding: "10px 12px", fontSize: 12, marginBottom: 14 }}>{err}</div>}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <div style={{ gridColumn: "1/-1" }}><label style={A.label}>Task title</label><input style={A.input} placeholder="e.g. Follow @ShopKampala" value={form.title} onChange={e => set("title", e.target.value)} /></div>
+          <div style={{ gridColumn: "1/-1" }}><label style={A.label}>Task title</label><input style={A.input} placeholder="e.g. Watch our latest YouTube video" value={form.title} onChange={e => set("title", e.target.value)} /></div>
+
+          <div><label style={A.label}>Task type</label>
+            <select style={A.input} value={form.type} onChange={e => set("type", e.target.value)}>
+              <optgroup label="YouTube">
+                <option value="youtube_watch">▶️ YouTube Watch</option>
+                <option value="youtube_subscribe">📺 YouTube Subscribe</option>
+              </optgroup>
+              <optgroup label="TikTok">
+                <option value="tiktok">🎵 TikTok</option>
+              </optgroup>
+              <optgroup label="Other">
+                <option value="social">📱 Social (general)</option>
+                <option value="survey">📋 Survey</option>
+                <option value="install">⬇️ App Install</option>
+                <option value="review">⭐ Review</option>
+              </optgroup>
+            </select>
+          </div>
+
+          {isTiktok && (
+            <div><label style={A.label}>TikTok action</label>
+              <select style={A.input} value={form.subtype} onChange={e => set("subtype", e.target.value)}>
+                <option value="follow">Follow account</option>
+                <option value="like">Like video</option>
+                <option value="watch">Watch video</option>
+                <option value="comment">Comment on video</option>
+              </select>
+            </div>
+          )}
+
           <div><label style={A.label}>Business</label>
             <select style={A.input} value={form.business} onChange={e => set("business", e.target.value)}>
               <option value="">Select business</option>
-              {businesses.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+              {(businesses ?? []).map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+              <option value="EarnNet">EarnNet (default)</option>
             </select>
           </div>
-          <div><label style={A.label}>Task type / category</label>
-            <select style={A.input} value={form.type} onChange={e => { set("type", e.target.value); set("category", e.target.value); }}>
-              {["social","survey","install","review"].map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
+
+          {isTimed && (
+            <div style={{ gridColumn: "1/-1" }}><label style={A.label}>{form.type === "youtube_watch" ? "YouTube video URL" : form.type === "youtube_subscribe" ? "YouTube channel URL" : "TikTok profile / video URL"}</label>
+              <input style={A.input} placeholder="https://..." value={form.link} onChange={e => set("link", e.target.value)} />
+            </div>
+          )}
+
+          {isTimed && (
+            <div><label style={A.label}>Timer duration (seconds)</label>
+              <input style={A.input} type="number" placeholder="60" value={form.duration_seconds} onChange={e => set("duration_seconds", parseInt(e.target.value))} />
+            </div>
+          )}
+
           <div><label style={A.label}>Reward per user (UGX)</label><input style={A.input} type="number" placeholder="500" value={form.reward} onChange={e => set("reward", e.target.value)} /></div>
           <div><label style={A.label}>Total budget (UGX)</label><input style={A.input} type="number" placeholder="250000" value={form.budget} onChange={e => set("budget", e.target.value)} /></div>
           <div><label style={A.label}>Max completions</label><input style={A.input} type="number" placeholder="500" value={form.limit} onChange={e => set("limit", e.target.value)} /></div>
-          <div><label style={A.label}>Icon</label>
-            <select style={A.input} value={form.icon} onChange={e => set("icon", e.target.value)}>
-              {["📱","📋","⬇️","⭐","🔗","📊","▶️"].map(i => <option key={i} value={i}>{i}</option>)}
-            </select>
-          </div>
         </div>
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-          <button style={{ ...A.primaryBtn, flex: 1, padding: "12px 0" }}
-            onClick={() => form.title && form.business && form.reward && onCreate(form)}>
-            Create Task
+          <button style={{ ...A.primaryBtn, flex: 1, padding: "12px 0", opacity: loading ? 0.7 : 1 }}
+            onClick={handleCreate} disabled={loading}>
+            {loading ? "Creating..." : "Create Task"}
           </button>
           <button style={{ flex: 1, padding: "12px 0", background: "transparent", border: "0.5px solid #ddd", borderRadius: 10, cursor: "pointer", fontSize: 14 }} onClick={onClose}>
             Cancel

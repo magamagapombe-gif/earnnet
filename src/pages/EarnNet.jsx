@@ -8,6 +8,14 @@ import {
 } from "../lib/supabase";
 
 const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
+
+const detectMethod = (phone) => {
+  const n = (phone ?? "").replace(/\D/g, "");
+  // Airtel Uganda: 070x, 075x, 074x, 020x
+  if (/^(070|075|074|020|25670|25675|25674|25620)/.test(n)) return "airtel";
+  // MTN Uganda: 077x, 078x, 076x, 031x, 039x (default)
+  return "mtn";
+};
 const BRAND      = "#1D9E75";
 const BRAND_DARK = "#0F6E56";
 const BG_DARK    = "#0F2D22";
@@ -23,6 +31,59 @@ function useDarkMode() {
     return next;
   });
   return [dark, toggle];
+}
+
+// ── Deposit polling hook ───────────────────────────────────────
+function useDepositPolling(userId, onSuccess) {
+  const [polling, setPolling]     = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const intervalRef               = useRef(null);
+  const startedBalanceRef         = useRef(null);
+
+  const startPolling = async (currentBalance) => {
+    startedBalanceRef.current = currentBalance;
+    setPolling(true);
+    setConfirmed(false);
+  };
+
+  useEffect(() => {
+    if (!polling) return;
+    let attempts = 0;
+    const maxAttempts = 60; // poll for up to 5 minutes (every 5s)
+
+    intervalRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("balance")
+          .eq("id", userId)
+          .single();
+
+        if (profile && profile.balance > startedBalanceRef.current) {
+          clearInterval(intervalRef.current);
+          setPolling(false);
+          setConfirmed(true);
+          onSuccess(profile.balance);
+        }
+      } catch { /* keep polling */ }
+
+      if (attempts >= maxAttempts) {
+        clearInterval(intervalRef.current);
+        setPolling(false);
+      }
+    }, 5000);
+
+    return () => clearInterval(intervalRef.current);
+  }, [polling, userId]);
+
+  const stopPolling = () => {
+    clearInterval(intervalRef.current);
+    setPolling(false);
+    setConfirmed(false);
+  };
+
+  return { polling, confirmed, startPolling, stopPolling };
 }
 
 // ── Theme tokens ───────────────────────────────────────────────
@@ -345,10 +406,10 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
 
   useEffect(() => { loadTasks(); loadWallet(); loadReferrals(); }, [loadTasks, loadWallet, loadReferrals]);
 
-  const handleCompleteTask = async (taskId) => {
+  const handleCompleteTask = async (taskId, proofBase64) => {
     if (!profile?.activated) { setActivateModal(true); return; }
     try {
-      await completeTask(uid, taskId);
+      await completeTask(uid, taskId, proofBase64);
       showToast("Task completed! Balance updated ✓");
       await Promise.all([loadTasks(), refreshProfile(), loadWallet()]);
     } catch (e) { showToast(e.message ?? "Could not complete task", "error"); }
@@ -364,21 +425,13 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   };
 
   const handleDeposit = async ({ amount, method, phone }) => {
-    try {
-      await requestDeposit(uid, parseInt(amount), method, phone);
-      showToast("Deposit request submitted! We'll confirm shortly ✓");
-      setDepositModal(false);
-      await loadWallet();
-    } catch (e) { showToast(e.message ?? "Deposit failed", "error"); }
+    // Just call the API — the modal manages its own waiting/success screens
+    await requestDeposit(uid, parseInt(amount), method, phone);
   };
 
   const handleActivate = async ({ method, phone }) => {
-    try {
-      await activateAccount(uid, method, phone);
-      showToast("Account activation request sent ✓ — we'll confirm within 24h");
-      setActivateModal(false);
-      await refreshProfile();
-    } catch (e) { showToast(e.message ?? "Activation failed", "error"); }
+    // Just call the API — the modal manages its own waiting/success screens
+    await activateAccount(uid, method, phone);
   };
 
   const tabs = [
@@ -484,8 +537,8 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       </nav>
 
       {withdrawModal && <WithdrawModal profile={profile} settings={settings} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
-      {depositModal  && <DepositModal  settings={settings} onClose={() => setDepositModal(false)}  onSubmit={handleDeposit} dark={dark} />}
-      {activateModal && <ActivateModal settings={settings} onClose={() => setActivateModal(false)} onSubmit={handleActivate} dark={dark} />}
+      {depositModal  && <DepositModal  settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} onClose={() => setDepositModal(false)}  onSubmit={handleDeposit} refreshProfile={refreshProfile} dark={dark} />}
+      {activateModal && <ActivateModal settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} profile={profile} onClose={() => setActivateModal(false)} onSubmit={handleActivate} refreshProfile={refreshProfile} dark={dark} />}
       {toast && <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background: toast.type === "error" ? "#E24B4A" : BRAND, color:"white", padding:"12px 24px", borderRadius:14, fontSize:13, fontWeight:500, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.25)", animation:"slideUp 0.3s ease", whiteSpace:"nowrap" }}>{toast.msg}</div>}
 
       {/* Close notif on outside click */}
@@ -505,21 +558,73 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
 }
 
 // ── Activate Modal ─────────────────────────────────────────────
-function ActivateModal({ settings, onClose, onSubmit, dark }) {
-  const [method, setMethod]   = useState("mtn");
-  const [phone, setPhone]     = useState("");
+function ActivateModal({ settings, userId, currentBalance, profile, onClose, onSubmit, refreshProfile, dark }) {
+  const [phone, setPhone]     = useState(profile?.phone ?? "");
+  const [method, setMethod]   = useState(detectMethod(profile?.phone));
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
-  const fee = parseInt(settings.activation_fee ?? 5000);
-  const T = theme(dark);
+  const [step, setStep]       = useState("form"); // "form" | "waiting" | "success"
+  const fee = parseInt(settings.activation_fee ?? 10000);
+  const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
+  const T   = theme(dark);
+
+  const { startPolling, stopPolling } = useDepositPolling(userId, async () => {
+    setStep("success");
+    await refreshProfile();
+  });
 
   const handleSubmit = async () => {
     setErr("");
     if (!phone) return setErr("Enter your mobile money number");
     setLoading(true);
-    await onSubmit({ method, phone });
-    setLoading(false);
+    try {
+      await onSubmit({ method, phone });
+      await startPolling(currentBalance);
+      setStep("waiting");
+    } catch (e) {
+      setErr(e.message ?? "Activation failed");
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleClose = () => { stopPolling(); onClose(); };
+
+  if (step === "success") {
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
+        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
+          <div style={{ fontSize:64, marginBottom:16 }}>⚡</div>
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>Account activated!</div>
+          <div style={{ fontSize:14, color:T.textSub, marginBottom:28, lineHeight:1.7 }}>
+            You can now complete tasks, earn commissions, and withdraw your earnings.
+          </div>
+          <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px" }} onClick={handleClose}>Start earning →</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "waiting") {
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
+        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
+          <div style={{ width:72, height:72, borderRadius:"50%", border:`4px solid ${dark ? "#2a5040" : "#eee"}`, borderTopColor:"#854F0B", margin:"0 auto 24px", animation:"spin 1s linear infinite" }} />
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:20, fontWeight:700, color:T.text, marginBottom:10 }}>Waiting for payment...</div>
+          <div style={{ fontSize:14, color:T.textSub, lineHeight:1.7, marginBottom:8 }}>A payment prompt has been sent to</div>
+          <div style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:8 }}>{phone}</div>
+          <div style={{ fontSize:13, color:T.textSub, lineHeight:1.7, marginBottom:28 }}>
+            Enter your {method.toUpperCase()} PIN to pay <strong style={{ color:T.text }}>{fmt(fee)}</strong> activation fee.
+            Your account will be activated automatically once payment is confirmed.
+          </div>
+          <button onClick={handleClose} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"10px 24px", fontSize:13, color:T.textSub, cursor:"pointer" }}>
+            Cancel
+          </button>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
@@ -537,48 +642,120 @@ function ActivateModal({ settings, onClose, onSubmit, dark }) {
           ))}
         </div>
         {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:4 }}>{err}</div>}
-        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Pay via</label>
-        <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
-          <option value="mtn">MTN Mobile Money</option>
-          <option value="airtel">Airtel Money</option>
-        </select>
+        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Mobile money number</label>
+        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
+        <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", marginTop:6, fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5" }}>
+          📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
+        </div>
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Your mobile money number</label>
         <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
-        <div style={{ background:"#FAEEDA", borderRadius:10, padding:"10px 14px", fontSize:12, color:"#854F0B", margin:"14px 0" }}>
-          ⚠️ Send <strong>{fmt(fee)}</strong> to our paybill, then submit below. We'll confirm and activate within 24 hours.
+        <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:12, color:BRAND_DARK, margin:"14px 0" }}>
+          ✅ Your account activates automatically once payment is confirmed — no waiting!
         </div>
         <button style={{ ...S.primaryBtn, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
-          {loading ? "Submitting..." : `Submit activation — ${fmt(fee)}`}
+          {loading ? "Sending prompt..." : `Pay ${fmt(fee)} & activate →`}
         </button>
       </div>
     </div>
   );
 }
 
-// ── Deposit Modal (with fee breakdown) ────────────────────────
-function DepositModal({ settings, onClose, onSubmit, dark }) {
+// ── Deposit Modal ──────────────────────────────────────────────
+function DepositModal({ settings, userId, currentBalance, profile, onClose, onSubmit, refreshProfile, dark }) {
   const [amount, setAmount]   = useState("");
-  const [method, setMethod]   = useState("mtn");
-  const [phone, setPhone]     = useState("");
+  const [phone, setPhone]     = useState(profile?.phone ?? "");
+  const [method, setMethod]   = useState(detectMethod(profile?.phone));
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
-  const minDeposit   = parseInt(settings.min_deposit ?? 2000);
-  // Platform fee from settings (e.g. 15 = 15%). Deposit fee is 0 for mobile money in Uganda.
-  const depositFeeRate = 0; // adjust if your platform charges
+  const [step, setStep]       = useState("form"); // "form" | "waiting" | "success"
+  const [newBalance, setNewBalance] = useState(null);
+
+  const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
+
+  const minDeposit   = parseInt(settings.min_deposit ?? 500);
   const quickAmounts = [5000, 10000, 20000, 50000];
-  const amt    = parseInt(amount) || 0;
-  const fee    = Math.round(amt * depositFeeRate);
-  const total  = amt + fee;
-  const T = theme(dark);
+  const amt          = parseInt(amount) || 0;
+  const feePct       = parseFloat(settings?.deposit_fee_pct ?? 3);
+  const platformFee  = amt ? Math.ceil(amt * feePct / 100) : 0;
+  const totalCharge  = amt ? amt + platformFee : 0;
+  const T            = theme(dark);
+
+  const { startPolling, stopPolling } = useDepositPolling(userId, async (balance) => {
+    setNewBalance(balance);
+    setStep("success");
+    await refreshProfile();
+  });
 
   const handleSubmit = async () => {
     setErr("");
     if (!amt || amt < minDeposit) return setErr(`Minimum deposit is ${fmt(minDeposit)}`);
     if (!phone) return setErr("Enter your mobile money number");
     setLoading(true);
-    await onSubmit({ amount: amt, method, phone });
-    setLoading(false);
+    try {
+      await onSubmit({ amount: amt, method, phone });
+      startPolling(currentBalance);
+      setStep("waiting");
+    } catch (e) {
+      setErr(e.message ?? "Deposit failed");
+      setLoading(false);
+    }
   };
+
+  const handleClose = () => { stopPolling(); onClose(); };
+
+  if (step === "success") {
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
+        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
+          <div style={{ fontSize:64, marginBottom:16 }}>🎉</div>
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>
+            Deposit confirmed!
+          </div>
+          <div style={{ fontSize:15, color:BRAND_DARK, fontWeight:600, marginBottom:6 }}>
+            {fmt(amt)} added to your wallet
+          </div>
+          <div style={{ fontSize:13, color:T.textSub, marginBottom:28 }}>
+            New balance: {fmt(newBalance)}
+          </div>
+          <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px" }} onClick={handleClose}>
+            Done ✓
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "waiting") {
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
+        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
+          <div style={{ width:72, height:72, borderRadius:"50%", border:`4px solid ${dark ? "#2a5040" : "#eee"}`, borderTopColor:BRAND, margin:"0 auto 24px", animation:"spin 1s linear infinite" }} />
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:20, fontWeight:700, color:T.text, marginBottom:10 }}>
+            Waiting for payment...
+          </div>
+          <div style={{ fontSize:14, color:T.textSub, lineHeight:1.7, marginBottom:8 }}>
+            A payment prompt has been sent to
+          </div>
+          <div style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:8 }}>{phone}</div>
+          <div style={{ fontSize:13, color:T.textSub, lineHeight:1.7, marginBottom:28 }}>
+            Enter your {method.toUpperCase()} PIN to approve <strong style={{ color:T.text }}>{fmt(amt)}</strong>.
+            This screen will update automatically once payment is received.
+          </div>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:28 }}>
+            <div style={{ width:8, height:8, borderRadius:"50%", background:BRAND, animation:"pulse 1.5s ease infinite" }} />
+            <div style={{ fontSize:12, color:T.textSub }}>Checking for payment every 5 seconds...</div>
+          </div>
+          <button onClick={handleClose} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"10px 24px", fontSize:13, color:T.textSub, cursor:"pointer" }}>
+            Cancel
+          </button>
+          <style>{`
+            @keyframes spin { to { transform: rotate(360deg); } }
+            @keyframes pulse { 0%,100%{opacity:0.4} 50%{opacity:1} }
+          `}</style>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
@@ -598,47 +775,491 @@ function DepositModal({ settings, onClose, onSubmit, dark }) {
             </button>
           ))}
         </div>
-
-        {/* Fee breakdown */}
         {amt > 0 && (
           <div style={{ background:dark ? "#142e20" : "#f8fafc", borderRadius:12, padding:"12px 14px", margin:"14px 0 4px" }}>
-            {[["Deposit amount", fmt(amt)],["Processing fee", fee > 0 ? fmt(fee) : "Free"]].map(([lbl, val]) => (
-              <div key={lbl} style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:T.textSub, marginBottom:6 }}>
-                <span>{lbl}</span><span>{val}</span>
-              </div>
-            ))}
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:T.textSub, marginBottom:6 }}>
+              <span>Wallet credit</span><span style={{ fontWeight:600, color:BRAND_DARK }}>{fmt(amt)}</span>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:T.textSub, marginBottom:6 }}>
+              <span>Platform fee ({feePct}%)</span><span>+{fmt(platformFee)}</span>
+            </div>
             <div style={{ borderTop:`0.5px solid ${T.border}`, paddingTop:8, display:"flex", justifyContent:"space-between", fontWeight:700, fontSize:14, color:T.text }}>
-              <span>Total to send</span><span style={{ color:BRAND }}>{fmt(total)}</span>
+              <span>You will be charged</span><span style={{ color:BRAND }}>{fmt(totalCharge)}</span>
             </div>
           </div>
         )}
-
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Payment method</label>
         <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
           <option value="mtn">MTN Mobile Money</option>
           <option value="airtel">Airtel Money</option>
         </select>
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Mobile money number</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
-        <div style={{ background:"#E6F1FB", borderRadius:10, padding:"10px 14px", fontSize:12, color:"#185FA5", margin:"14px 0" }}>
-          ℹ️ Send the amount to our paybill, then submit. Your wallet will be credited once confirmed.
+        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
+        <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", marginTop:6, marginBottom:8, fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5" }}>
+          📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
+        </div>
+        <div style={{ background:"#E6F1FB", borderRadius:10, padding:"10px 14px", fontSize:12, color:"#185FA5", margin:"8px 0 14px" }}>
+          ℹ️ You will receive a payment prompt on your phone. Enter your PIN to complete the deposit instantly.
         </div>
         <button style={{ ...S.primaryBtn, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
-          {loading ? "Submitting..." : `Submit deposit — ${fmt(total || minDeposit)} →`}
+          {loading ? "Sending prompt..." : `Deposit ${fmt(amt || minDeposit)} →`}
         </button>
       </div>
     </div>
   );
 }
 
-// ── Task Detail ────────────────────────────────────────────────
-function TaskDetailPage({ task: t, profile, onBack, onComplete, dark }) {
+// ── Countdown Timer Hook ───────────────────────────────────────
+function useCountdown(seconds, onComplete) {
+  const [timeLeft, setTimeLeft] = useState(seconds);
+  const [running, setRunning]   = useState(false);
+  const [finished, setFinished] = useState(false);
+  const ref = useRef(null);
+
+  const start = () => { setTimeLeft(seconds); setRunning(true); setFinished(false); };
+
+  useEffect(() => {
+    if (!running) return;
+    ref.current = setInterval(() => {
+      setTimeLeft(t => {
+        if (t <= 1) {
+          clearInterval(ref.current);
+          setRunning(false);
+          setFinished(true);
+          onComplete();
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(ref.current);
+  }, [running]);
+
+  const fmt = (s) => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+  return { timeLeft, running, finished, start, display: fmt(timeLeft) };
+}
+
+// ── YouTube Watch Task ─────────────────────────────────────────
+// Timer design:
+//   1. User clicks "Start Task" → timer starts immediately (no waiting for YT events).
+//   2. YouTube onStateChange postMessage is used to PAUSE the timer when the user
+//      pauses/ends the video, and RESUME it when they play again.
+//   3. If YT events never arrive (autoplay blocked, cross-origin, etc.) the timer
+//      just runs freely — worst case the user gets the reward for having the tab open.
+//      But in practice, pause/resume events DO arrive with enablejsapi=1.
+//   4. Timer uses performance.now() deltas every 250ms — no drift, no 1s jumps.
+function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
+  const T        = theme(dark);
+  const duration = t.duration_seconds ?? 60;
+
+  const [phase, setPhase]       = useState("ready");   // ready | watching | done
+  // timerRunning starts true the moment user clicks Start, pauses on YT pause events
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [vidState, setVidState]         = useState("idle"); // idle|playing|paused|ended
+  const [elapsed, setElapsed]           = useState(0);
+
+  const doneRef     = useRef(false);
+  const intervalRef = useRef(null);
+  const lastTickRef = useRef(null);
+
+  const fmtTime = (s) => {
+    const safe = Math.max(0, Math.round(s));
+    return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+  };
+
+  const getYTId = (url) => {
+    if (!url) return null;
+    const m = url.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+    return m ? m[1] : null;
+  };
+  const ytId = getYTId(t.link);
+
+  // ── YouTube postMessage listener — only used to pause/resume the timer ──
+  useEffect(() => {
+    if (phase !== "watching") return;
+    const handler = (e) => {
+      if (!e.data) return;
+      try {
+        const msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+        if (msg.event === "onStateChange") {
+          const s = Number(msg.info);
+          // 1=playing, 3=buffering → timer should run
+          // 2=paused, 0=ended    → timer should pause
+          if (s === 1 || s === 3) {
+            setVidState("playing");
+            setTimerRunning(true);
+          } else if (s === 2 || s === 0) {
+            setVidState(s === 0 ? "ended" : "paused");
+            setTimerRunning(false);
+          }
+        }
+      } catch {}
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [phase]);
+
+  // ── Core timer — ticks while timerRunning === true ──
+  useEffect(() => {
+    clearInterval(intervalRef.current);
+    if (!timerRunning) { lastTickRef.current = null; return; }
+
+    lastTickRef.current = performance.now();
+    intervalRef.current = setInterval(() => {
+      const now   = performance.now();
+      const delta = (now - (lastTickRef.current ?? now)) / 1000;
+      lastTickRef.current = now;
+
+      setElapsed(prev => {
+        const next = prev + delta;
+        if (next >= duration && !doneRef.current) {
+          doneRef.current = true;
+          clearInterval(intervalRef.current);
+          onComplete(t.id).then(() => setPhase("done")).catch(() => {});
+          return duration;
+        }
+        return Math.min(next, duration);
+      });
+    }, 250);
+
+    return () => clearInterval(intervalRef.current);
+  }, [timerRunning, duration]);
+
+  const handleStart = () => {
+    if (!profile?.activated) return;
+    setPhase("watching");
+    setTimerRunning(true); // ← start immediately, don't wait for YT event
+  };
+
+  if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
+
+  const timeLeft  = Math.max(0, duration - elapsed);
+  const pct       = Math.min(100, (elapsed / duration) * 100);
+  const isPaused  = !timerRunning && phase === "watching";
+  const isPlaying = timerRunning;
+  const durationLabel = duration < 60
+    ? `${duration} seconds`
+    : `${Math.ceil(duration / 60)} minute${duration >= 120 ? "s" : ""}`;
+
+  return (
+    <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
+      <TaskHeader task={t} onBack={onBack} />
+      <div style={{ padding:"0 16px", marginTop:-12 }}>
+        <TaskStatBar task={t} dark={dark} />
+
+        {/* Video */}
+        {ytId ? (
+          <div style={{ borderRadius:16, overflow:"hidden", marginBottom:14, background:"#000" }}>
+            {phase === "watching" ? (
+              <iframe
+                width="100%"
+                src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&enablejsapi=1`}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                style={{ border:"none", display:"block", width:"100%", height:215 }}
+              />
+            ) : (
+              <div style={{ height:215, background:`url(https://img.youtube.com/vi/${ytId}/hqdefault.jpg) center/cover no-repeat`, display:"flex", alignItems:"center", justifyContent:"center", borderRadius:16 }}>
+                <div style={{ width:66, height:66, borderRadius:"50%", background:"rgba(255,0,0,0.88)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 18px rgba(0,0,0,0.35)" }}>
+                  <span style={{ fontSize:28, color:"white", marginLeft:6 }}>▶</span>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ background:"#FAECE7", borderRadius:14, padding:20, marginBottom:14, textAlign:"center", color:"#993C1D", fontSize:13, fontWeight:600 }}>
+            ⚠️ No video link saved for this task. Contact support.
+          </div>
+        )}
+
+        {/* Timer */}
+        {phase === "watching" && (
+          <div style={{ background:T.card, borderRadius:16, padding:"20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
+            <div style={{ fontSize:11, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.08em",
+              color: isPaused ? "#E24B4A" : T.textSub }}>
+              {isPaused
+                ? "⏸ PAUSED — RESUME VIDEO TO CONTINUE"
+                : "▶ WATCHING — TIME REMAINING"}
+            </div>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:56, fontWeight:700, letterSpacing:3,
+              color: isPaused ? "#E24B4A" : timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+              {fmtTime(timeLeft)}
+            </div>
+            <div style={{ height:10, background: dark ? "#2a5040" : "#eee", borderRadius:5, marginTop:16 }}>
+              <div style={{ height:"100%", width:`${pct}%`, background: isPaused ? "#E24B4A" : BRAND, borderRadius:5, transition:"width 0.25s linear" }} />
+            </div>
+            <div style={{ fontSize:12, marginTop:10, fontWeight: isPaused ? 700 : 400,
+              color: isPaused ? "#E24B4A" : T.textSub }}>
+              {isPaused
+                ? "⚠️ Timer paused — resume the video to continue earning"
+                : "Timer runs while video plays ✓"}
+            </div>
+          </div>
+        )}
+
+        {/* Steps */}
+        {phase === "ready" && (
+          <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
+            <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>How to earn {fmt(t.reward)}</div>
+            {[
+              ["Tap Start Task below to load the video", BRAND_DARK, "#E1F5EE"],
+              [`Watch ${durationLabel} — timer starts immediately`, BRAND_DARK, "#E1F5EE"],
+              ["Pausing the video pauses the timer — no skipping!", "#993C1D", "#FAECE7"],
+              ["Reward credits automatically when timer hits 0:00", BRAND_DARK, "#E1F5EE"],
+            ].map(([s, tc, bg], i) => (
+              <div key={i} style={{ display:"flex", gap:12, marginBottom:10, alignItems:"flex-start" }}>
+                <div style={{ width:26, height:26, borderRadius:"50%", background:bg, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:12, color:tc, flexShrink:0 }}>{i+1}</div>
+                <div style={{ fontSize:13, color: tc === "#993C1D" ? "#993C1D" : T.textSub, lineHeight:1.6, paddingTop:4, fontWeight: tc === "#993C1D" ? 600 : 400 }}>{s}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!profile?.activated && <ActivationBanner />}
+      </div>
+
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, padding:"16px", background:T.card, borderTop:`0.5px solid ${T.border}` }}>
+        {phase === "ready" && (
+          <button style={{ ...S.primaryBtn, padding:"15px 0", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}
+            onClick={handleStart} disabled={!profile?.activated}>
+            {profile?.activated ? <>▶ Start Task &amp; Load Video</> : "⚡ Activate account to earn"}
+          </button>
+        )}
+        {phase === "watching" && (
+          <div style={{ textAlign:"center", padding:"8px 0" }}>
+            <div style={{ fontSize:13, fontWeight: isPaused ? 700 : 400, color: isPaused ? "#E24B4A" : T.textSub }}>
+              {isPaused ? "⏸ Resume the video to continue earning" : "▶ Keep watching — do not pause or skip"}
+            </div>
+          </div>
+        )}
+      </div>
+      <TaskPageStyles />
+    </div>
+  );
+}
+
+// ── YouTube Subscribe Task ─────────────────────────────────────
+function YoutubeSubscribeTask({ task: t, profile, onBack, onComplete, dark }) {
+  const T        = theme(dark);
+  const duration = t.duration_seconds ?? 30;
+  const [phase, setPhase] = useState("ready"); // ready | timing | done
+
+  const timer = useCountdown(duration, async () => {
+    await onComplete(t.id);
+    setPhase("done");
+  });
+
+  const handleStart = () => {
+    if (!profile?.activated) return;
+    if (t.link) window.open(t.link, "_blank");
+    setPhase("timing");
+    timer.start();
+  };
+
+  if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
+
+  return (
+    <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
+      <TaskHeader task={t} onBack={onBack} />
+      <div style={{ padding:"0 16px", marginTop:-12 }}>
+        <TaskStatBar task={t} dark={dark} />
+
+        {phase === "ready" && (
+          <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
+            <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>How to earn {fmt(t.reward)}</div>
+            {[
+              "Tap Start Task — YouTube opens",
+              "Subscribe to the channel",
+              "Come back here and wait for the timer to finish"
+            ].map((s,i) => (
+              <div key={i} style={{ display:"flex", gap:12, marginBottom:10, alignItems:"flex-start" }}>
+                <div style={{ width:26, height:26, borderRadius:"50%", background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:12, color:BRAND_DARK, flexShrink:0 }}>{i+1}</div>
+                <div style={{ fontSize:13, color:T.textSub, lineHeight:1.6, paddingTop:4 }}>{s}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {phase === "timing" && (
+          <div style={{ background:T.card, borderRadius:16, padding:"32px 20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
+            <div style={{ fontSize:48, marginBottom:12 }}>📺</div>
+            <div style={{ fontSize:11, color:T.textSub, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.08em" }}>Verifying your subscription</div>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:52, fontWeight:700, color: timer.timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+              {timer.display}
+            </div>
+            <div style={{ height:8, background: dark ? "#2a5040" : "#eee", borderRadius:4, marginTop:16 }}>
+              <div style={{ height:"100%", width:`${((duration - timer.timeLeft) / duration) * 100}%`, background:BRAND, borderRadius:4, transition:"width 1s linear" }} />
+            </div>
+            <div style={{ fontSize:12, color:T.textSub, marginTop:12 }}>Stay on this page — reward credits when timer hits 0:00</div>
+          </div>
+        )}
+
+        {!profile?.activated && <ActivationBanner />}
+      </div>
+
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, padding:"16px", background:T.card, borderTop:`0.5px solid ${T.border}` }}>
+        {phase === "ready" && (
+          <button style={{ ...S.primaryBtn, padding:"15px 0", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}
+            onClick={handleStart} disabled={!profile?.activated}>
+            {profile?.activated ? <>📺 Start Task &amp; Open YouTube</> : "⚡ Activate to earn"}
+          </button>
+        )}
+        {phase === "timing" && (
+          <div style={{ textAlign:"center", padding:"10px 0" }}>
+            <div style={{ fontSize:13, color:T.textSub }}>⏱ Timer running — stay on this page</div>
+          </div>
+        )}
+      </div>
+      <TaskPageStyles />
+    </div>
+  );
+}
+
+// ── TikTok Task (Follow / Like / Watch / Comment) ──────────────
+function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
+  const T        = theme(dark);
+  const duration = t.duration_seconds ?? 45;
+  const [phase, setPhase]   = useState("ready"); // ready | timing | upload | done
+  const [doing, setDoing]   = useState(false);
+  const [proof, setProof]   = useState(null);   // base64 screenshot
+  const [proofName, setProofName] = useState("");
+  const [err, setErr]       = useState("");
+
+  const timer = useCountdown(duration, () => setPhase("upload"));
+
+  const handleStart = () => {
+    if (!profile?.activated) return;
+    if (t.link) window.open(t.link, "_blank");
+    setPhase("timing");
+    timer.start();
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setProofName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setProof(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = async () => {
+    if (!proof) return setErr("Please upload a screenshot as proof");
+    setErr("");
+    setDoing(true);
+    try {
+      await onComplete(t.id, proof);
+      setPhase("done");
+    } catch(e) { setErr(e.message ?? "Submission failed"); }
+    setDoing(false);
+  };
+
+  const actionLabel = { follow:"Follow", like:"Like", watch:"Watch", comment:"Comment" }[t.subtype] ?? t.subtype ?? "Complete";
+
+  if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
+
+  return (
+    <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
+      <TaskHeader task={t} onBack={onBack} />
+      <div style={{ padding:"0 16px", marginTop:-12 }}>
+        <TaskStatBar task={t} dark={dark} />
+
+        {/* TikTok brand banner */}
+        <div style={{ background:"linear-gradient(135deg,#010101,#69C9D0)", borderRadius:14, padding:"14px 16px", marginBottom:14, display:"flex", alignItems:"center", gap:12 }}>
+          <span style={{ fontSize:32 }}>🎵</span>
+          <div>
+            <div style={{ fontWeight:700, color:"white", fontSize:14 }}>TikTok Task — {actionLabel}</div>
+            <div style={{ fontSize:12, color:"rgba(255,255,255,0.75)", marginTop:2 }}>This task opens TikTok in your browser</div>
+          </div>
+        </div>
+
+        {phase === "timing" && (
+          <div style={{ background:T.card, borderRadius:16, padding:"24px 20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
+            <div style={{ fontSize:11, color:T.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.08em" }}>Verifying action</div>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:48, fontWeight:700, color: timer.timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+              {timer.display}
+            </div>
+            <div style={{ fontSize:12, color:T.textSub, marginTop:8 }}>Complete the {actionLabel.toLowerCase()} on TikTok then come back</div>
+            <div style={{ height:6, background: dark ? "#2a5040" : "#eee", borderRadius:3, marginTop:14 }}>
+              <div style={{ height:"100%", width:`${((duration - timer.timeLeft) / duration) * 100}%`, background:"#69C9D0", borderRadius:3, transition:"width 1s linear" }} />
+            </div>
+          </div>
+        )}
+
+        {phase === "upload" && (
+          <div style={{ background:T.card, borderRadius:16, padding:"20px", marginBottom:14 }}>
+            <div style={{ fontWeight:600, fontSize:15, marginBottom:6, color:T.text }}>📸 Upload proof screenshot</div>
+            <div style={{ fontSize:13, color:T.textSub, marginBottom:16, lineHeight:1.6 }}>
+              Take a screenshot showing you {actionLabel.toLowerCase()}ed on TikTok and upload it below.
+            </div>
+            {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:8, padding:"10px 12px", fontSize:12, marginBottom:12 }}>{err}</div>}
+            <label style={{ display:"block", border:`2px dashed ${proof ? BRAND : T.border}`, borderRadius:12, padding:"24px", textAlign:"center", cursor:"pointer", background: proof ? "#E1F5EE" : T.bg }}>
+              <input type="file" accept="image/*" style={{ display:"none" }} onChange={handleFileChange} />
+              {proof ? (
+                <div>
+                  <div style={{ fontSize:32, marginBottom:8 }}>✅</div>
+                  <div style={{ fontSize:13, color:BRAND_DARK, fontWeight:600 }}>{proofName}</div>
+                  <div style={{ fontSize:11, color:T.textSub, marginTop:4 }}>Tap to change</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize:32, marginBottom:8 }}>📷</div>
+                  <div style={{ fontSize:13, color:T.textSub }}>Tap to upload screenshot</div>
+                </div>
+              )}
+            </label>
+          </div>
+        )}
+
+        {phase === "ready" && (
+          <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
+            <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>How to earn {fmt(t.reward)}</div>
+            {[
+              `Tap Start Task — TikTok opens in your browser`,
+              `${actionLabel} the account/video as instructed`,
+              `Come back here and wait for the timer`,
+              `Upload a screenshot as proof — reward credits instantly`,
+            ].map((s,i) => (
+              <div key={i} style={{ display:"flex", gap:12, marginBottom:10, alignItems:"flex-start" }}>
+                <div style={{ width:26, height:26, borderRadius:"50%", background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:12, color:BRAND_DARK, flexShrink:0 }}>{i+1}</div>
+                <div style={{ fontSize:13, color:T.textSub, lineHeight:1.6, paddingTop:4 }}>{s}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!profile?.activated && <ActivationBanner />}
+      </div>
+
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, padding:"16px", background:T.card, borderTop:`0.5px solid ${T.border}` }}>
+        {phase === "ready" && (
+          <button style={{ ...S.primaryBtn, padding:"15px 0", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}
+            onClick={handleStart} disabled={!profile?.activated}>
+            {profile?.activated ? <>🎵 Start Task &amp; Open TikTok</> : "⚡ Activate to earn"}
+          </button>
+        )}
+        {phase === "timing" && (
+          <div style={{ textAlign:"center", padding:"10px 0" }}>
+            <div style={{ fontSize:13, color:T.textSub }}>⏱ Timer running — come back after doing the task on TikTok</div>
+          </div>
+        )}
+        {phase === "upload" && (
+          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15 }} onClick={handleSubmit} disabled={doing}>
+            {doing ? "Submitting..." : "Submit proof & claim reward →"}
+          </button>
+        )}
+      </div>
+      <TaskPageStyles />
+    </div>
+  );
+}
+
+// ── Generic Task (social / survey / install / review) ──────────
+function GenericTask({ task: t, profile, onBack, onComplete, dark }) {
+  const T = theme(dark);
   const [doing, setDoing] = useState(false);
   const [done, setDone]   = useState(false);
-  const T = theme(dark);
-  const pct       = t.budget > 0 ? Math.min(100, Math.round((t.used / t.budget) * 100)) : 0;
-  const spotsLeft = (t.limit_count ?? 0) - (t.completions ?? 0);
-  const steps     = {
+  const steps = {
     social:  ["Open the link below","Follow / like the page or post","Come back and click Mark as Done"],
     survey:  ["Read the questions carefully","Answer honestly — takes about 5 minutes","Submit and mark as done here"],
     install: ["Download the app from the link","Open it and create an account","Mark done after logging in"],
@@ -653,88 +1274,131 @@ function TaskDetailPage({ task: t, profile, onBack, onComplete, dark }) {
     setDoing(false);
   };
 
-  if (done) {
-    return (
-      <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:T.bg, padding:24 }}>
-        <div style={{ fontSize:64, marginBottom:16 }}>🎉</div>
-        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:24, fontWeight:700, marginBottom:8, color:T.text }}>Task complete!</div>
-        <div style={{ fontSize:16, color:BRAND_DARK, fontWeight:600, marginBottom:24 }}>+{fmt(t.reward)} added to your balance</div>
-        <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 32px" }} onClick={onBack}>Back to tasks</button>
-      </div>
-    );
-  }
+  if (done) return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
-      <div style={{ background:`linear-gradient(135deg,${BG_DARK},${BRAND_DARK})`, color:"white", padding:"20px 16px 28px" }}>
-        <button onClick={onBack} style={{ background:"rgba(255,255,255,0.15)", border:"none", color:"white", borderRadius:10, padding:"7px 14px", fontSize:13, cursor:"pointer", marginBottom:20 }}>← Back</button>
-        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          <div style={{ width:56, height:56, borderRadius:14, background:t.color ?? "#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, flexShrink:0 }}>{t.icon ?? "📋"}</div>
-          <div>
-            <div style={{ fontSize:11, opacity:0.7, marginBottom:4 }}>{t.business}</div>
-            <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20, lineHeight:1.2 }}>{t.title}</div>
-          </div>
-        </div>
-      </div>
-
+      <TaskHeader task={t} onBack={onBack} />
       <div style={{ padding:"0 16px", marginTop:-12 }}>
-        <div style={{ background:T.card, borderRadius:16, padding:"18px 20px", boxShadow:"0 4px 16px rgba(0,0,0,0.08)", marginBottom:16, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, textAlign:"center" }}>
-          {[["REWARD", fmt(t.reward), BRAND_DARK, "'Sora',sans-serif", 20],["TIME", t.time_est ?? "~5 min",T.text,"inherit",16],["SPOTS LEFT", spotsLeft, spotsLeft < 20 ? "#E24B4A" : T.text,"inherit",16]].map(([lbl,val,tc,ff,fs]) => (
-            <div key={lbl}>
-              <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
-              <div style={{ fontFamily:ff, fontWeight:700, fontSize:fs, color:tc }}>{val}</div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", marginBottom:14 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:T.textSub, marginBottom:8 }}>
-            <span>Task progress</span><span>{t.completions ?? 0} / {t.limit_count ?? "∞"} completed</span>
-          </div>
-          <div style={{ height:8, background: dark ? "#2a5040" : "#eee", borderRadius:4 }}>
-            <div style={{ height:"100%", width:`${pct}%`, background:pct > 80 ? "#E24B4A" : BRAND, borderRadius:4, transition:"width 0.5s ease" }} />
-          </div>
-        </div>
-
+        <TaskStatBar task={t} dark={dark} />
         {t.description && (
           <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
             <div style={{ fontWeight:600, fontSize:14, marginBottom:8, color:T.text }}>About this task</div>
             <p style={{ fontSize:13, color:T.textSub, lineHeight:1.7 }}>{t.description}</p>
           </div>
         )}
-
         <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
           <div style={{ fontWeight:600, fontSize:14, marginBottom:14, color:T.text }}>How to complete</div>
           {taskSteps.map((step, i) => (
-            <div key={i} style={{ display:"flex", gap:12, marginBottom: i < taskSteps.length - 1 ? 14 : 0, alignItems:"flex-start" }}>
-              <div style={{ width:28, height:28, borderRadius:"50%", background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:13, color:BRAND_DARK, flexShrink:0 }}>{i + 1}</div>
+            <div key={i} style={{ display:"flex", gap:12, marginBottom: i < taskSteps.length-1 ? 14 : 0, alignItems:"flex-start" }}>
+              <div style={{ width:28, height:28, borderRadius:"50%", background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:13, color:BRAND_DARK, flexShrink:0 }}>{i+1}</div>
               <div style={{ fontSize:13, color:T.textSub, lineHeight:1.6, paddingTop:4 }}>{step}</div>
             </div>
           ))}
         </div>
-
-        {!profile?.activated && (
-          <div style={{ background:"#FAEEDA", borderRadius:14, padding:"14px 16px", marginBottom:14 }}>
-            <div style={{ fontWeight:600, fontSize:14, color:"#854F0B", marginBottom:4 }}>⚡ Account not activated</div>
-            <div style={{ fontSize:13, color:"#854F0B" }}>You need to activate your account to complete tasks and earn money.</div>
-          </div>
+        {t.link && (
+          <a href={t.link} target="_blank" rel="noreferrer"
+            style={{ display:"block", background:"#E1F5EE", color:BRAND_DARK, borderRadius:12, padding:"13px 16px", fontSize:14, fontWeight:600, textDecoration:"none", textAlign:"center", marginBottom:14 }}>
+            🔗 Open task link →
+          </a>
         )}
+        {!profile?.activated && <ActivationBanner />}
       </div>
-
       <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, padding:"16px", background:T.card, borderTop:`0.5px solid ${T.border}` }}>
-        <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15 }} onClick={handleDone} disabled={doing}>
-          {doing ? "Submitting..." : profile?.activated ? "Mark as done ✓" : "⚡ Activate to earn"}
+        {t.link && !done && (
+          <a href={t.link} target="_blank" rel="noreferrer"
+            style={{ display:"block", background:"#E1F5EE", color:BRAND_DARK, borderRadius:12, padding:"12px 16px", fontSize:14, fontWeight:600, textDecoration:"none", textAlign:"center", marginBottom:10 }}>
+            🔗 Open task link →
+          </a>
+        )}
+        <button style={{ ...S.primaryBtn, padding:"15px 0", fontSize:16 }} onClick={handleDone} disabled={doing || !profile?.activated}>
+          {doing ? "Submitting..." : profile?.activated ? "✓ Mark as Done & Claim Reward" : "⚡ Activate to earn"}
         </button>
       </div>
-
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=DM+Sans:wght@400;500;600&display=swap');
-        * { box-sizing:border-box; margin:0; padding:0; }
-        body { font-family:'DM Sans',sans-serif; }
-        button:active { transform:scale(0.97); }
-      `}</style>
+      <TaskPageStyles />
     </div>
   );
+}
+
+// ── Shared sub-components ──────────────────────────────────────
+function TaskSuccessScreen({ reward, onBack, dark }) {
+  const T = theme(dark);
+  return (
+    <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:T.bg, padding:24 }}>
+      <div style={{ fontSize:72, marginBottom:16 }}>🎉</div>
+      <div style={{ fontFamily:"'Sora',sans-serif", fontSize:24, fontWeight:700, marginBottom:8, color:T.text }}>Task complete!</div>
+      <div style={{ fontSize:16, color:BRAND_DARK, fontWeight:600, marginBottom:8 }}>+{fmt(reward)} added to your balance</div>
+      <div style={{ fontSize:12, color:T.textSub, marginBottom:28, textAlign:"center" }}>Reward credited instantly. Admin reviews all completions.</div>
+      <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 32px" }} onClick={onBack}>Back to tasks</button>
+    </div>
+  );
+}
+
+function TaskHeader({ task: t, onBack }) {
+  return (
+    <div style={{ background:`linear-gradient(135deg,${BG_DARK},${BRAND_DARK})`, color:"white", padding:"20px 16px 28px" }}>
+      <button onClick={onBack} style={{ background:"rgba(255,255,255,0.15)", border:"none", color:"white", borderRadius:10, padding:"7px 14px", fontSize:13, cursor:"pointer", marginBottom:20 }}>← Back</button>
+      <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+        <div style={{ width:56, height:56, borderRadius:14, background:t.color ?? "#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, flexShrink:0 }}>{t.icon ?? "📋"}</div>
+        <div>
+          <div style={{ fontSize:11, opacity:0.7, marginBottom:4 }}>{t.business}</div>
+          <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20, lineHeight:1.2 }}>{t.title}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TaskStatBar({ task: t, dark }) {
+  const T = theme(dark);
+  const pct       = t.budget > 0 ? Math.min(100, Math.round((t.used / t.budget) * 100)) : 0;
+  const spotsLeft = (t.limit_count ?? 0) - (t.completions ?? 0);
+  return (
+    <div style={{ background:T.card, borderRadius:16, padding:"18px 20px", boxShadow:"0 4px 16px rgba(0,0,0,0.08)", marginBottom:14 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, textAlign:"center", marginBottom:12 }}>
+        {[["REWARD",fmt(t.reward),BRAND_DARK,"'Sora',sans-serif",20],["TIME",t.time_est??"~5 min",T.text,"inherit",15],["SPOTS LEFT",spotsLeft,spotsLeft<20?"#E24B4A":T.text,"inherit",15]].map(([lbl,val,tc,ff,fs]) => (
+          <div key={lbl}>
+            <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
+            <div style={{ fontFamily:ff, fontWeight:700, fontSize:fs, color:tc }}>{val}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.textSub, marginBottom:6 }}>
+        <span>Task progress</span><span>{t.completions??0} / {t.limit_count??"∞"}</span>
+      </div>
+      <div style={{ height:6, background: dark ? "#2a5040" : "#eee", borderRadius:3 }}>
+        <div style={{ height:"100%", width:`${pct}%`, background:pct>80?"#E24B4A":BRAND, borderRadius:3, transition:"width 0.5s ease" }} />
+      </div>
+    </div>
+  );
+}
+
+function ActivationBanner() {
+  return (
+    <div style={{ background:"#FAEEDA", borderRadius:14, padding:"14px 16px", marginBottom:14 }}>
+      <div style={{ fontWeight:600, fontSize:14, color:"#854F0B", marginBottom:4 }}>⚡ Account not activated</div>
+      <div style={{ fontSize:13, color:"#854F0B" }}>Activate your account to complete tasks and earn.</div>
+    </div>
+  );
+}
+
+function TaskPageStyles() {
+  return (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=DM+Sans:wght@400;500;600&display=swap');
+      * { box-sizing:border-box; margin:0; padding:0; }
+      body { font-family:'DM Sans',sans-serif; }
+      button:active { transform:scale(0.97); }
+    `}</style>
+  );
+}
+
+// ── Task Detail Router ─────────────────────────────────────────
+function TaskDetailPage({ task: t, profile, onBack, onComplete, dark }) {
+  if (t.type === "youtube_watch")     return <YoutubeWatchTask     task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
+  if (t.type === "youtube_subscribe") return <YoutubeSubscribeTask task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
+  if (t.type === "tiktok")            return <TiktokTask           task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
+  return <GenericTask task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
 }
 
 // ── Mini Earnings Chart ────────────────────────────────────────
@@ -878,16 +1542,32 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, dark })
 
 function TaskCard({ task: t, onSelect, compact, dark }) {
   const T = theme(dark);
+  const typeMeta = {
+    youtube_watch:     { label:"▶ Watch",     bg:"#FAECE7", tc:"#993C1D" },
+    youtube_subscribe: { label:"📺 Subscribe", bg:"#FAECE7", tc:"#993C1D" },
+    tiktok:            { label:"🎵 TikTok",    bg:"#F3E8FF", tc:"#7C3AED" },
+    social:            { label:"📱 Social",    bg:"#E6F1FB", tc:"#185FA5" },
+    survey:            { label:"📋 Survey",    bg:"#E1F5EE", tc:"#0F6E56" },
+    install:           { label:"⬇ Install",    bg:"#FAEEDA", tc:"#854F0B" },
+    review:            { label:"⭐ Review",     bg:"#FEF9E1", tc:"#854F0B" },
+  };
+  const meta = typeMeta[t.type] ?? typeMeta.social;
+  const spotsLeft = (t.limit_count ?? 0) - (t.completions ?? 0);
+
   return (
-    <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin: compact ? "0 0 10px" : "0 16px 12px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", cursor:"pointer" }} onClick={onSelect}>
+    <div style={{ background:T.card, borderRadius:16, padding:"14px 16px", margin: compact ? "0 0 10px" : "0 16px 12px", boxShadow:"0 2px 8px rgba(0,0,0,0.07)", cursor:"pointer", border:`0.5px solid ${T.border}` }} onClick={onSelect}>
       <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-        <div style={{ width:44, height:44, borderRadius:12, background:t.color ?? "#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>{t.icon ?? "📋"}</div>
-        <div style={{ flex:1 }}>
-          <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{t.title}</div>
-          <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{t.business} · {t.time_est ?? "~5 min"}</div>
+        <div style={{ width:48, height:48, borderRadius:13, background:t.color ?? "#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, flexShrink:0 }}>{t.icon ?? "📋"}</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
+            <span style={{ background:meta.bg, color:meta.tc, fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:20 }}>{meta.label}</span>
+            {spotsLeft < 20 && spotsLeft > 0 && <span style={{ background:"#FAECE7", color:"#E24B4A", fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:20 }}>⚡ {spotsLeft} left</span>}
+          </div>
+          <div style={{ fontWeight:600, fontSize:14, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.title}</div>
+          <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{t.business}</div>
         </div>
-        <div style={{ textAlign:"right" }}>
-          <div style={{ fontWeight:700, color:t.text_color ?? BRAND_DARK, fontSize:15 }}>{fmt(t.reward)}</div>
+        <div style={{ textAlign:"right", flexShrink:0 }}>
+          <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:16 }}>{fmt(t.reward)}</div>
           <div style={{ fontSize:10, color:T.textSub }}>per task</div>
         </div>
       </div>
@@ -899,7 +1579,7 @@ function TaskCard({ task: t, onSelect, compact, dark }) {
 function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw, onDeposit, dark }) {
   const [view, setView] = useState("transactions");
   const T = theme(dark);
-  const minW = settings.min_withdrawal ?? 5000;
+  const minW = settings.min_withdrawal ?? 1000;
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
@@ -984,18 +1664,24 @@ function StatusPill({ status }) {
 // ── Withdraw Modal ─────────────────────────────────────────────
 function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
   const [amount, setAmount]   = useState("");
-  const [method, setMethod]   = useState("mtn");
   const [phone, setPhone]     = useState(profile?.phone ?? "");
+  const [method, setMethod]   = useState(detectMethod(profile?.phone));
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
   const T = theme(dark);
-  const min = parseInt(settings.min_withdrawal ?? 5000);
+  const min = parseInt(settings.min_withdrawal ?? 1000);
   const max = parseInt(settings.max_withdrawal ?? 1000000);
   const bal = profile?.balance ?? 0;
+
+  const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
   const handleSubmit = async () => {
     setErr("");
     const amt = parseInt(amount);
+    // Withdrawal window: 7:00 AM – 7:00 PM EAT
+    const now  = new Date();
+    const hour = now.getHours(); // local device time (Uganda = UTC+3)
+    if (hour < 7 || hour >= 19) return setErr("Withdrawals are only processed between 7:00 AM and 7:00 PM. Try again during business hours.");
     if (!amt || amt < min) return setErr(`Minimum withdrawal is ${fmt(min)}`);
     if (amt > max)         return setErr(`Maximum is ${fmt(max)}`);
     if (amt > bal)         return setErr("Insufficient balance");
@@ -1026,7 +1712,7 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
         <button style={{ ...S.primaryBtn, marginTop:14, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
           {loading ? "Submitting..." : "Request withdrawal →"}
         </button>
-        <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>Processed within 24 hours on business days.</p>
+        <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>💡 Withdrawals available 7:00 AM – 7:00 PM daily.</p>
       </div>
     </div>
   );
@@ -1035,9 +1721,7 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
 // ── Referral Tab ───────────────────────────────────────────────
 function ReferralTab({ profile, referrals, settings, dark }) {
   const T = theme(dark);
-  const ref1 = settings.ref1_rate ?? 10;
-  const ref2 = settings.ref2_rate ?? 5;
-  const ref3 = settings.ref3_rate ?? 2;
+  const ref1 = settings.ref1_rate ?? 3000; // UGX 3000 fixed per activation referral
   const code = profile?.referral_code ?? "—";
   const link = `${window.location.origin}?ref=${code}`;
   const [copied, setCopied] = useState(false);
@@ -1052,13 +1736,14 @@ function ReferralTab({ profile, referrals, settings, dark }) {
       </div>
       <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 16px 16px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
         <div style={{ fontWeight:600, fontSize:14, marginBottom:14, color:T.text }}>Commission rates</div>
-        {[["🥇","Level 1 – Direct",ref1,"#E1F5EE",BRAND_DARK],["🥈","Level 2 – Their referrals",ref2,"#E6F1FB","#185FA5"],["🥉","Level 3 – Their referrals",ref3,"#FAEEDA","#854F0B"]].map(([icon,lbl,pct,bg,tc]) => (
-          <div key={lbl} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-            <div style={{ width:38, height:38, borderRadius:10, background:bg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>{icon}</div>
-            <div style={{ flex:1, fontSize:13, color:T.text }}>{lbl}</div>
-            <div style={{ fontWeight:700, color:tc, fontSize:15 }}>{pct}%</div>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+          <div style={{ width:38, height:38, borderRadius:10, background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>🥇</div>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:13, color:T.text, fontWeight:600 }}>Direct referral bonus</div>
+            <div style={{ fontSize:11, color:T.textSub }}>When someone you refer activates their account</div>
           </div>
-        ))}
+          <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:15 }}>{fmt(ref1)}</div>
+        </div>
       </div>
       <div style={{ padding:"0 16px" }}>
         <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>Your referrals ({referrals.length})</div>
