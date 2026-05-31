@@ -840,27 +840,19 @@ function useCountdown(seconds, onComplete) {
 }
 
 // ── YouTube Watch Task ─────────────────────────────────────────
-// Mobile-safe timer design:
-//   • NO autoplay — mobile browsers block it. Instead we show a "Tap to play"
-//     overlay on top of the iframe after the user clicks Start Task.
-//   • Timer starts ONLY when YouTube fires onStateChange state=1 (actually playing).
-//   • Timer pauses on state=2 (paused) or state=0 (ended).
-//   • "needsTap" phase: iframe is loaded without autoplay, overlay prompts user to tap.
-//     The overlay is a transparent div on top of the iframe — tapping it dismisses
-//     the overlay and the user taps the YouTube play button directly.
-//   • This works on both desktop (where autoplay may work) and mobile (where it won't).
+// Desktop: autoplay=1 works, onStateChange fires → timer driven by YT events.
+// Mobile:  autoplay is blocked by the browser UNLESS triggered by a user gesture.
+//          "Start Task" button click IS a user gesture, so we set autoplay=1 AND
+//          start the timer immediately on that click. onStateChange will still
+//          pause/resume the timer if it fires (bonus), but we don't depend on it.
 function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   const T        = theme(dark);
   const duration = t.duration_seconds ?? 60;
 
-  // phase: ready → watching → done
-  // watchPhase: idle → needsTap → playing/paused
-  const [phase, setPhase]           = useState("ready");
+  const [phase, setPhase]               = useState("ready");
   const [timerRunning, setTimerRunning] = useState(false);
-  const [vidStarted, setVidStarted] = useState(false);   // true once YT fires state=1 first time
-  const [vidState, setVidState]     = useState("idle");
-  const [elapsed, setElapsed]       = useState(0);
-  const [showTapHint, setShowTapHint] = useState(true);  // overlay hint until first play
+  const [vidState, setVidState]         = useState("idle");
+  const [elapsed, setElapsed]           = useState(0);
 
   const doneRef     = useRef(false);
   const intervalRef = useRef(null);
@@ -878,7 +870,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   };
   const ytId = getYTId(t.link);
 
-  // ── YouTube postMessage — drives timer state ──
+  // ── YouTube postMessage — used to pause/resume if events arrive ──
   useEffect(() => {
     if (phase !== "watching") return;
     const handler = (e) => {
@@ -888,17 +880,12 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         if (msg.event === "onStateChange") {
           const s = Number(msg.info);
           if (s === 1 || s === 3) {
-            // Video is playing/buffering
             setVidState("playing");
-            setVidStarted(true);
-            setShowTapHint(false);
-            setTimerRunning(true);
+            setTimerRunning(true);   // resume if was paused
           } else if (s === 2) {
-            // Paused
             setVidState("paused");
-            setTimerRunning(false);
+            setTimerRunning(false);  // pause timer when video paused
           } else if (s === 0) {
-            // Ended
             setVidState("ended");
             setTimerRunning(false);
           }
@@ -909,11 +896,10 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
     return () => window.removeEventListener("message", handler);
   }, [phase]);
 
-  // ── Timer ticks only while timerRunning ──
+  // ── Timer ticks while timerRunning ──
   useEffect(() => {
     clearInterval(intervalRef.current);
     if (!timerRunning) { lastTickRef.current = null; return; }
-
     lastTickRef.current = performance.now();
     intervalRef.current = setInterval(() => {
       const now   = performance.now();
@@ -930,23 +916,21 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         return Math.min(next, duration);
       });
     }, 250);
-
     return () => clearInterval(intervalRef.current);
   }, [timerRunning, duration]);
 
+  // Start task — this is a direct user gesture so autoplay will be allowed
   const handleStart = () => {
     if (!profile?.activated) return;
     setPhase("watching");
-    setShowTapHint(true);
-    // Do NOT start timer here — wait for YT onStateChange state=1
+    setTimerRunning(true); // start timer immediately — works on both desktop & mobile
   };
 
   if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
 
   const timeLeft  = Math.max(0, duration - elapsed);
   const pct       = Math.min(100, (elapsed / duration) * 100);
-  const isPaused  = vidStarted && !timerRunning && phase === "watching";
-  const isPlaying = timerRunning;
+  const isPaused  = !timerRunning && phase === "watching";
   const durationLabel = duration < 60
     ? `${duration} seconds`
     : `${Math.ceil(duration / 60)} minute${duration >= 120 ? "s" : ""}`;
@@ -957,37 +941,17 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
       <div style={{ padding:"0 16px", marginTop:-12 }}>
         <TaskStatBar task={t} dark={dark} />
 
-        {/* Video + tap-to-play overlay */}
+        {/* Video */}
         {ytId ? (
-          <div style={{ borderRadius:16, overflow:"hidden", marginBottom:14, background:"#000", position:"relative" }}>
+          <div style={{ borderRadius:16, overflow:"hidden", marginBottom:14, background:"#000" }}>
             {phase === "watching" ? (
-              <>
-                <iframe
-                  width="100%"
-                  src={`https://www.youtube.com/embed/${ytId}?autoplay=0&controls=1&enablejsapi=1&playsinline=1&rel=0`}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  style={{ border:"none", display:"block", width:"100%", height:215 }}
-                />
-                {/* Tap-to-play hint overlay — shown until video starts */}
-                {showTapHint && (
-                  <div
-                    onClick={() => setShowTapHint(false)}
-                    style={{
-                      position:"absolute", inset:0, display:"flex", flexDirection:"column",
-                      alignItems:"center", justifyContent:"center", gap:10,
-                      background:"rgba(0,0,0,0.55)", cursor:"pointer", borderRadius:16,
-                    }}>
-                    <div style={{ width:70, height:70, borderRadius:"50%", background:"rgba(255,0,0,0.92)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 20px rgba(0,0,0,0.5)" }}>
-                      <span style={{ fontSize:30, color:"white", marginLeft:7 }}>▶</span>
-                    </div>
-                    <div style={{ color:"white", fontSize:13, fontWeight:600, textAlign:"center", lineHeight:1.5, padding:"0 20px" }}>
-                      Tap the play button to start<br/>
-                      <span style={{ fontSize:11, opacity:0.8, fontWeight:400 }}>Timer starts when video plays</span>
-                    </div>
-                  </div>
-                )}
-              </>
+              <iframe
+                width="100%"
+                src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&enablejsapi=1&playsinline=1&rel=0&mute=0`}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                style={{ border:"none", display:"block", width:"100%", height:215 }}
+              />
             ) : (
               <div style={{ height:215, background:`url(https://img.youtube.com/vi/${ytId}/hqdefault.jpg) center/cover no-repeat`, display:"flex", alignItems:"center", justifyContent:"center", borderRadius:16 }}>
                 <div style={{ width:66, height:66, borderRadius:"50%", background:"rgba(255,0,0,0.88)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 18px rgba(0,0,0,0.35)" }}>
@@ -1006,15 +970,11 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         {phase === "watching" && (
           <div style={{ background:T.card, borderRadius:16, padding:"20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
             <div style={{ fontSize:11, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.08em",
-              color: isPaused ? "#E24B4A" : !vidStarted ? T.textSub : T.textSub }}>
-              {!vidStarted
-                ? "TAP PLAY ON THE VIDEO TO START TIMER"
-                : isPaused
-                  ? "⏸ PAUSED — RESUME VIDEO TO CONTINUE"
-                  : "▶ WATCHING — TIME REMAINING"}
+              color: isPaused ? "#E24B4A" : T.textSub }}>
+              {isPaused ? "⏸ PAUSED — RESUME VIDEO TO CONTINUE" : "▶ WATCHING — TIME REMAINING"}
             </div>
             <div style={{ fontFamily:"'Sora',sans-serif", fontSize:56, fontWeight:700, letterSpacing:3,
-              color: isPaused ? "#E24B4A" : !vidStarted ? T.textSub : timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+              color: isPaused ? "#E24B4A" : timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
               {fmtTime(timeLeft)}
             </div>
             <div style={{ height:10, background: dark ? "#2a5040" : "#eee", borderRadius:5, marginTop:16 }}>
@@ -1022,11 +982,9 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
             </div>
             <div style={{ fontSize:12, marginTop:10, fontWeight: isPaused ? 700 : 400,
               color: isPaused ? "#E24B4A" : T.textSub }}>
-              {!vidStarted
-                ? "Press play on the video above to begin"
-                : isPaused
-                  ? "⚠️ Timer paused — resume the video to continue earning"
-                  : "Timer runs while video plays ✓"}
+              {isPaused
+                ? "⚠️ Timer paused — resume the video to continue earning"
+                : "Timer runs while video plays ✓"}
             </div>
           </div>
         )}
@@ -1036,8 +994,8 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
           <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
             <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>How to earn {fmt(t.reward)}</div>
             {[
-              ["Tap Start Task then press play on the video", BRAND_DARK, "#E1F5EE"],
-              [`Watch ${durationLabel} — timer starts when video plays`, BRAND_DARK, "#E1F5EE"],
+              ["Tap Start Task — video loads and timer begins", BRAND_DARK, "#E1F5EE"],
+              [`Watch ${durationLabel} without pausing`, BRAND_DARK, "#E1F5EE"],
               ["Pausing the video pauses the timer — no skipping!", "#993C1D", "#FAECE7"],
               ["Reward credits automatically when timer hits 0:00", BRAND_DARK, "#E1F5EE"],
             ].map(([s, tc, bg], i) => (
@@ -1062,11 +1020,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         {phase === "watching" && (
           <div style={{ textAlign:"center", padding:"8px 0" }}>
             <div style={{ fontSize:13, fontWeight: isPaused ? 700 : 400, color: isPaused ? "#E24B4A" : T.textSub }}>
-              {!vidStarted
-                ? "👆 Tap play on the video to start earning"
-                : isPaused
-                  ? "⏸ Resume the video to continue earning"
-                  : "▶ Keep watching — do not pause or skip"}
+              {isPaused ? "⏸ Resume the video to continue earning" : "▶ Keep watching — do not pause or skip"}
             </div>
           </div>
         )}
