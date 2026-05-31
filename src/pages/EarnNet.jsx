@@ -840,23 +840,19 @@ function useCountdown(seconds, onComplete) {
 }
 
 // ── YouTube Watch Task ─────────────────────────────────────────
-// Desktop: autoplay=1 works, onStateChange fires → timer driven by YT events.
-// Mobile:  autoplay is blocked by the browser UNLESS triggered by a user gesture.
-//          "Start Task" button click IS a user gesture, so we set autoplay=1 AND
-//          start the timer immediately on that click. onStateChange will still
-//          pause/resume the timer if it fires (bonus), but we don't depend on it.
 function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   const T        = theme(dark);
   const duration = t.duration_seconds ?? 60;
 
   const [phase, setPhase]               = useState("ready");
   const [timerRunning, setTimerRunning] = useState(false);
-  const [vidState, setVidState]         = useState("idle");
   const [elapsed, setElapsed]           = useState(0);
+  const [vidState, setVidState]         = useState("idle");
 
   const doneRef     = useRef(false);
   const intervalRef = useRef(null);
   const lastTickRef = useRef(null);
+  const iframeRef   = useRef(null);
 
   const fmtTime = (s) => {
     const safe = Math.max(0, Math.round(s));
@@ -870,7 +866,22 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   };
   const ytId = getYTId(t.link);
 
-  // ── YouTube postMessage — used to pause/resume if events arrive ──
+  // Send a command to the YT iframe player
+  const ytCmd = (func) => {
+    try {
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ event: "command", func, args: [] }), "*"
+      );
+    } catch {}
+  };
+
+  // Once iframe loads, play the video
+  const handleIframeLoad = () => {
+    // Small delay to let the player initialise before sending playVideo
+    setTimeout(() => ytCmd("playVideo"), 800);
+  };
+
+  // YouTube state events — pause timer when user pauses, resume when they play
   useEffect(() => {
     if (phase !== "watching") return;
     const handler = (e) => {
@@ -879,16 +890,9 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         const msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
         if (msg.event === "onStateChange") {
           const s = Number(msg.info);
-          if (s === 1 || s === 3) {
-            setVidState("playing");
-            setTimerRunning(true);   // resume if was paused
-          } else if (s === 2) {
-            setVidState("paused");
-            setTimerRunning(false);  // pause timer when video paused
-          } else if (s === 0) {
-            setVidState("ended");
-            setTimerRunning(false);
-          }
+          if (s === 1 || s === 3) { setVidState("playing");  setTimerRunning(true);  }
+          else if (s === 2)       { setVidState("paused");   setTimerRunning(false); }
+          else if (s === 0)       { setVidState("ended");    setTimerRunning(false); }
         }
       } catch {}
     };
@@ -896,7 +900,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
     return () => window.removeEventListener("message", handler);
   }, [phase]);
 
-  // ── Timer ticks while timerRunning ──
+  // Timer — performance.now() deltas every 250ms
   useEffect(() => {
     clearInterval(intervalRef.current);
     if (!timerRunning) { lastTickRef.current = null; return; }
@@ -910,6 +914,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         if (next >= duration && !doneRef.current) {
           doneRef.current = true;
           clearInterval(intervalRef.current);
+          ytCmd("stopVideo"); // stop the video when time is up
           onComplete(t.id).then(() => setPhase("done")).catch(() => {});
           return duration;
         }
@@ -919,11 +924,12 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
     return () => clearInterval(intervalRef.current);
   }, [timerRunning, duration]);
 
-  // Start task — this is a direct user gesture so autoplay will be allowed
+  // Start task: render iframe (autoplay=1) + start timer immediately
+  // The button tap is the user gesture browsers require for autoplay on mobile
   const handleStart = () => {
     if (!profile?.activated) return;
     setPhase("watching");
-    setTimerRunning(true); // start timer immediately — works on both desktop & mobile
+    setTimerRunning(true);
   };
 
   if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
@@ -946,10 +952,12 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
           <div style={{ borderRadius:16, overflow:"hidden", marginBottom:14, background:"#000" }}>
             {phase === "watching" ? (
               <iframe
+                ref={iframeRef}
                 width="100%"
-                src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&enablejsapi=1&playsinline=1&rel=0&mute=0`}
+                src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&enablejsapi=1&playsinline=1&rel=0`}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
+                onLoad={handleIframeLoad}
                 style={{ border:"none", display:"block", width:"100%", height:215 }}
               />
             ) : (
@@ -994,7 +1002,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
           <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
             <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>How to earn {fmt(t.reward)}</div>
             {[
-              ["Tap Start Task — video loads and timer begins", BRAND_DARK, "#E1F5EE"],
+              ["Tap Start Task — video loads and plays automatically", BRAND_DARK, "#E1F5EE"],
               [`Watch ${durationLabel} without pausing`, BRAND_DARK, "#E1F5EE"],
               ["Pausing the video pauses the timer — no skipping!", "#993C1D", "#FAECE7"],
               ["Reward credits automatically when timer hits 0:00", BRAND_DARK, "#E1F5EE"],
