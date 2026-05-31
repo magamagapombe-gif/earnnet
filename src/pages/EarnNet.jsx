@@ -1786,7 +1786,7 @@ function ReferralTab({ profile, referrals, settings, dark }) {
       <div style={{ padding:"0 16px" }}>
         <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>Your referrals ({referrals.length})</div>
         {referrals.length === 0
-          ? <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", textAlign:"center", color:T.textSub, padding:30 }}>No referrals yet.<br />Share your code to start earning commission!</div>
+          ? <div style={{ background:T.card, borderRadius:14, padding:30, textAlign:"center", color:T.textSub }}>No referrals yet.<br />Share your code to start earning commission!</div>
           : referrals.map(r => (
               <div key={r.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", alignItems:"center", gap:12 }}>
                 <div style={{ width:36, height:36, borderRadius:"50%", background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:600, color:BRAND_DARK }}>
