@@ -5,6 +5,8 @@ import {
   getActiveTasks, completeTask, getTransactions, requestWithdrawal,
   getUserWithdrawals, requestDeposit, getUserDeposits, activateAccount,
   getReferralTree, getSettings,
+  getInvestmentPlans, getUserInvestments, buyInvestmentPlan,
+  requestInvestmentPayment, matureUserInvestments,
 } from "../lib/supabase";
 
 const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
@@ -19,6 +21,22 @@ const detectMethod = (phone) => {
 const BRAND      = "#1D9E75";
 const BRAND_DARK = "#0F6E56";
 const BG_DARK    = "#0F2D22";
+
+// ── VIP Tier config ────────────────────────────────────────────
+const VIP_TIERS = {
+  bronze:   { label:"🥉 Bronze",   color:"#CD7F32", bg:"#FEF3E2", threshold:0,      perk:"Base rewards",        multiplier:1.00 },
+  silver:   { label:"🥈 Silver",   color:"#9E9E9E", bg:"#F5F5F5", threshold:25000,  perk:"+10% task rewards",   multiplier:1.10 },
+  gold:     { label:"🥇 Gold",     color:"#F5A623", bg:"#FAEEDA", threshold:75000,  perk:"+20% task rewards",   multiplier:1.20 },
+  platinum: { label:"💎 Platinum", color:"#7B61FF", bg:"#F0EEFF", threshold:200000, perk:"+35% task rewards",   multiplier:1.35 },
+};
+
+// ── Investment plan display config (mirrors DB) ────────────────
+const PLAN_META = {
+  Starter: { icon:"🌱", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)", badge:"#E1F5EE", badgeText:BRAND_DARK },
+  Growth:  { icon:"🌿", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)", badge:"#E6F1FB", badgeText:"#185FA5" },
+  Premium: { icon:"🌳", gradient:"linear-gradient(135deg,#854F0B,#E5873A)", badge:"#FAEEDA", badgeText:"#854F0B" },
+  Elite:   { icon:"💎", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)", badge:"#F0EEFF",  badgeText:"#7B61FF" },
+};
 
 // ── Dark mode context ──────────────────────────────────────────
 function useDarkMode() {
@@ -365,11 +383,14 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [withdrawals, setWithdrawals]     = useState([]);
   const [deposits, setDeposits]           = useState([]);
   const [referrals, setReferrals]         = useState([]);
+  const [investments, setInvestments]     = useState([]);
+  const [investPlans, setInvestPlans]     = useState([]);
   const [toast, setToast]                 = useState(null);
   const [taskLoading, setTaskLoading]     = useState(false);
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [depositModal, setDepositModal]   = useState(false);
   const [activateModal, setActivateModal] = useState(false);
+  const [investModal, setInvestModal]     = useState(null); // plan object or null
   const [selectedTask, setSelectedTask]   = useState(null);
   const [notifOpen, setNotifOpen]         = useState(false);
   const uid = session.user.id;
@@ -404,7 +425,21 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     setReferrals(await getReferralTree(uid));
   }, [uid]);
 
-  useEffect(() => { loadTasks(); loadWallet(); loadReferrals(); }, [loadTasks, loadWallet, loadReferrals]);
+  const loadInvestments = useCallback(async () => {
+    try {
+      const [invs, plans] = await Promise.all([
+        getUserInvestments(uid),
+        getInvestmentPlans(),
+      ]);
+      // Check & credit any matured investments, then refresh profile
+      const matured = await matureUserInvestments(uid);
+      if (matured > 0) await refreshProfile();
+      setInvestments(invs);
+      setInvestPlans(plans);
+    } catch {}
+  }, [uid]);
+
+  useEffect(() => { loadTasks(); loadWallet(); loadReferrals(); loadInvestments(); }, [loadTasks, loadWallet, loadReferrals, loadInvestments]);
 
   const handleCompleteTask = async (taskId, proofBase64) => {
     if (!profile?.activated) { setActivateModal(true); return; }
@@ -437,6 +472,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const tabs = [
     { id:"home",     icon:"🏠", label:"Home" },
     { id:"tasks",    icon:"📋", label:"Tasks" },
+    { id:"grow",     icon:"🌱", label:"Grow" },
     { id:"wallet",   icon:"💰", label:"Wallet" },
     { id:"referral", icon:"👥", label:"Refer" },
     { id:"profile",  icon:"👤", label:"Profile" },
@@ -519,8 +555,9 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       </div>
 
       <main style={{ flex:1, overflowY:"auto", paddingTop:4 }}>
-        {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} onGoTasks={() => setTab("tasks")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} dark={dark} />}
+        {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} dark={dark} />}
         {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} dark={dark} />}
+        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={investPlans} onBuyPlan={setInvestModal} onRefresh={loadInvestments} dark={dark} />}
         {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
         {tab === "referral" && <ReferralTab profile={profile} referrals={referrals} settings={settings} dark={dark} />}
         {tab === "profile"  && <ProfileTab  profile={profile} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
@@ -539,6 +576,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       {withdrawModal && <WithdrawModal profile={profile} settings={settings} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
       {depositModal  && <DepositModal  settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} onClose={() => setDepositModal(false)}  onSubmit={handleDeposit} refreshProfile={refreshProfile} dark={dark} />}
       {activateModal && <ActivateModal settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} profile={profile} onClose={() => setActivateModal(false)} onSubmit={handleActivate} refreshProfile={refreshProfile} dark={dark} />}
+      {investModal   && <InvestModal   plan={investModal} profile={profile} userId={uid} investments={investments} onClose={() => setInvestModal(null)} onSuccess={async () => { setInvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Investment activated! Watch your profits grow 🌱"); }} dark={dark} />}
       {toast && <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background: toast.type === "error" ? "#E24B4A" : BRAND, color:"white", padding:"12px 24px", borderRadius:14, fontSize:13, fontWeight:500, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.25)", animation:"slideUp 0.3s ease", whiteSpace:"nowrap" }}>{toast.msg}</div>}
 
       {/* Close notif on outside click */}
@@ -1440,10 +1478,12 @@ function EarningsChart({ txns, dark }) {
 }
 
 // ── Home Tab ───────────────────────────────────────────────────
-function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, onActivate, onSelectTask, txns, dark }) {
+function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, onActivate, onSelectTask, txns, onGoGrow, dark }) {
   const streakDays  = profile?.streak_days ?? 0;
   const streakBonus = settings.streak_bonus ?? 5000;
   const T = theme(dark);
+  const vipTier  = profile?.vip_tier ?? "bronze";
+  const vipInfo  = VIP_TIERS[vipTier];
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
@@ -1470,6 +1510,19 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
 
       {/* Earnings chart */}
       <EarningsChart txns={txns} dark={dark} />
+
+      {/* Grow teaser */}
+      <div style={{ background:`linear-gradient(135deg,${BG_DARK},#1a4030)`, borderRadius:16, margin:"0 16px 12px", padding:"16px 18px", cursor:"pointer", boxShadow:"0 4px 16px rgba(15,46,34,0.3)" }} onClick={onGoGrow}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div>
+            <div style={{ fontWeight:700, fontSize:14, color:"white" }}>🌱 EarnNet Grow</div>
+            <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", marginTop:3 }}>
+              {profile?.vip_tier ? `${VIP_TIERS[profile.vip_tier]?.label} member` : "Invest & earn up to 6%/day"}
+            </div>
+          </div>
+          <div style={{ background:BRAND, color:"white", borderRadius:10, padding:"7px 14px", fontSize:12, fontWeight:600 }}>Invest →</div>
+        </div>
+      </div>
 
       <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 16px 12px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -1638,7 +1691,7 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
 function TxRow({ tx, dark }) {
   const T = theme(dark);
   const isCredit = tx.amount > 0;
-  const icons    = { task:"✅", referral:"👥", withdrawal:"💸", bonus:"🎁", streak:"🔥", deposit:"💳", activation:"⚡" };
+  const icons = { task:"✅", referral:"👥", withdrawal:"💸", bonus:"🎁", streak:"🔥", deposit:"💳", activation:"⚡", investment:"🌱", investment_profit:"💰" };
   return (
     <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", alignItems:"center", gap:12 }}>
       <div style={{ width:38, height:38, borderRadius:10, background: isCredit ? "#E1F5EE" : "#FAECE7", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>
@@ -1659,6 +1712,490 @@ function StatusPill({ status }) {
   const map = { pending:{bg:"#FAEEDA",tc:"#854F0B"}, processing:{bg:"#E6F1FB",tc:"#185FA5"}, paid:{bg:"#E1F5EE",tc:"#0F6E56"}, confirmed:{bg:"#E1F5EE",tc:"#0F6E56"}, rejected:{bg:"#FAECE7",tc:"#993C1D"} };
   const c   = map[status] ?? { bg:"#f0f0f0", tc:"#888" };
   return <span style={{ background:c.bg, color:c.tc, padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:600 }}>{status}</span>;
+}
+
+// ── Live Profit Counter Hook ───────────────────────────────────
+// Calculates profit earned so far for a single active investment,
+// ticking up in real time based on elapsed seconds.
+function useLiveProfitCounter(investment) {
+  const [profit, setProfit] = useState(0);
+
+  useEffect(() => {
+    if (!investment || investment.status !== "active") {
+      setProfit(0);
+      return;
+    }
+    const principal    = investment.amount;
+    const dailyRate    = parseFloat(investment.daily_rate);
+    const totalSeconds = investment.duration_days * 86400;
+    const startMs      = new Date(investment.starts_at).getTime();
+    const perSecond    = (principal * dailyRate * investment.duration_days) / totalSeconds;
+
+    const tick = () => {
+      const elapsedSeconds = Math.max(0, (Date.now() - startMs) / 1000);
+      const capped         = Math.min(elapsedSeconds, totalSeconds);
+      setProfit(Math.floor(capped * perSecond));
+    };
+
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [investment?.id]);
+
+  return profit;
+}
+
+// ── Grow Tab ───────────────────────────────────────────────────
+function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
+  const T           = theme(dark);
+  const activeInvs  = investments.filter(i => i.status === "active");
+  const historyInvs = investments.filter(i => i.status === "paid_out");
+  const vipTier     = profile?.vip_tier ?? "bronze";
+  const vipInfo     = VIP_TIERS[vipTier];
+  const totalInvested = profile?.total_invested ?? 0;
+
+  // Total live profit across all active investments
+  const totalLiveProfit = activeInvs.reduce((sum, inv) => {
+    const principal    = inv.amount;
+    const dailyRate    = parseFloat(inv.daily_rate);
+    const totalSeconds = inv.duration_days * 86400;
+    const startMs      = new Date(inv.starts_at).getTime();
+    const elapsedSec   = Math.max(0, (Date.now() - startMs) / 1000);
+    const perSecond    = (principal * dailyRate * inv.duration_days) / totalSeconds;
+    return sum + Math.floor(Math.min(elapsedSec, totalSeconds) * perSecond);
+  }, 0);
+
+  const [displayProfit, setDisplayProfit] = useState(totalLiveProfit);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const p = activeInvs.reduce((sum, inv) => {
+        const principal    = inv.amount;
+        const dailyRate    = parseFloat(inv.daily_rate);
+        const totalSeconds = inv.duration_days * 86400;
+        const startMs      = new Date(inv.starts_at).getTime();
+        const elapsedSec   = Math.max(0, (Date.now() - startMs) / 1000);
+        const perSecond    = (principal * dailyRate * inv.duration_days) / totalSeconds;
+        return sum + Math.floor(Math.min(elapsedSec, totalSeconds) * perSecond);
+      }, 0);
+      setDisplayProfit(p);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [investments]);
+
+  // Find next VIP tier
+  const tierOrder   = ["bronze","silver","gold","platinum"];
+  const tierIdx     = tierOrder.indexOf(vipTier);
+  const nextTierKey = tierOrder[tierIdx + 1];
+  const nextTier    = nextTierKey ? VIP_TIERS[nextTierKey] : null;
+  const progressToNext = nextTier
+    ? Math.min(100, Math.round(((totalInvested - vipInfo.threshold) / (nextTier.threshold - vipInfo.threshold)) * 100))
+    : 100;
+
+  // Which plan IDs already have active investments
+  const activePlanIds = activeInvs.map(i => i.plan_id);
+
+  return (
+    <div style={{ animation:"slideUp 0.3s ease", paddingBottom:100 }}>
+
+      {/* ── Total profit hero card ── */}
+      <div style={{ background:`linear-gradient(135deg,${BG_DARK} 0%,#1a3d2b 50%,${BRAND_DARK} 100%)`, margin:16, borderRadius:24, padding:"28px 22px", color:"white", boxShadow:"0 8px 32px rgba(15,46,34,0.4)", position:"relative", overflow:"hidden" }}>
+        {/* decorative circle */}
+        <div style={{ position:"absolute", right:-30, top:-30, width:130, height:130, borderRadius:"50%", background:"rgba(255,255,255,0.05)" }} />
+        <div style={{ position:"absolute", right:20, bottom:-40, width:100, height:100, borderRadius:"50%", background:"rgba(255,255,255,0.04)" }} />
+
+        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>
+          Total profit growing
+        </div>
+        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:42, fontWeight:700, letterSpacing:-1, marginBottom:4, transition:"all 0.5s" }}>
+          {fmt(displayProfit)}
+        </div>
+        <div style={{ fontSize:12, opacity:0.65, marginBottom:20 }}>
+          Across {activeInvs.length} active plan{activeInvs.length !== 1 ? "s" : ""} · updates every second
+        </div>
+
+        {/* VIP badge */}
+        <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.12)", borderRadius:12, padding:"8px 14px" }}>
+          <span style={{ fontSize:18 }}>{vipInfo.label.split(" ")[0]}</span>
+          <div>
+            <div style={{ fontSize:12, fontWeight:700 }}>{vipInfo.label} Member</div>
+            <div style={{ fontSize:10, opacity:0.75 }}>{vipInfo.perk}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── VIP Tier progress ── */}
+      <div style={{ background:T.card, borderRadius:16, margin:"0 16px 16px", padding:"16px 18px", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+          <div style={{ fontWeight:600, fontSize:14, color:T.text }}>VIP Tier Progress</div>
+          {nextTier && (
+            <div style={{ fontSize:11, color:T.textSub }}>
+              {fmt(nextTier.threshold - totalInvested)} to {nextTier.label}
+            </div>
+          )}
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+          {["bronze","silver","gold","platinum"].map((tk, i) => {
+            const ti    = VIP_TIERS[tk];
+            const isDone = tierOrder.indexOf(tk) <= tierIdx;
+            return (
+              <div key={tk} style={{ textAlign:"center", flex:1 }}>
+                <div style={{ width:28, height:28, borderRadius:"50%", background: isDone ? ti.bg : (dark ? "#1a3d2b" : "#eee"), border:`2px solid ${isDone ? ti.color : "transparent"}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, margin:"0 auto 4px" }}>
+                  {ti.label.split(" ")[0]}
+                </div>
+                <div style={{ fontSize:9, color: isDone ? ti.color : T.textSub, fontWeight: isDone ? 700 : 400 }}>
+                  {tk.charAt(0).toUpperCase()+tk.slice(1)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ height:6, background: dark ? "#1a3d2b" : "#eee", borderRadius:3 }}>
+          <div style={{ height:"100%", width:`${progressToNext}%`, background:`linear-gradient(90deg,${BRAND},${BRAND_DARK})`, borderRadius:3, transition:"width 0.5s ease" }} />
+        </div>
+        <div style={{ fontSize:11, color:T.textSub, marginTop:8, textAlign:"center" }}>
+          Total invested: <strong style={{ color:T.text }}>{fmt(totalInvested)}</strong>
+          {nextTier && <> · Reach {fmt(nextTier.threshold)} for {nextTier.label}</>}
+        </div>
+      </div>
+
+      {/* ── Active investments ── */}
+      {activeInvs.length > 0 && (
+        <div style={{ padding:"0 16px", marginBottom:16 }}>
+          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>
+            📈 Your active investments
+          </div>
+          {activeInvs.map(inv => (
+            <ActiveInvestmentCard key={inv.id} investment={inv} dark={dark} />
+          ))}
+        </div>
+      )}
+
+      {/* ── Plans to buy ── */}
+      <div style={{ padding:"0 16px", marginBottom:16 }}>
+        <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:4 }}>Investment Plans</div>
+        <div style={{ fontSize:12, color:T.textSub, marginBottom:14 }}>
+          Buy a plan, watch your money grow, withdraw at maturity.
+        </div>
+        {plans.map(plan => {
+          const meta        = PLAN_META[plan.name] ?? PLAN_META.Starter;
+          const isActive    = activePlanIds.includes(plan.id);
+          // Find the next plan above this one for upgrade messaging
+          const planIdx     = plans.findIndex(p => p.id === plan.id);
+          const prevPlan    = plans[planIdx - 1];
+          const hasLower    = prevPlan && activePlanIds.includes(prevPlan.id);
+          const upgradeCost = hasLower ? plan.amount - prevPlan.amount : null;
+          const totalProfit = Math.floor(plan.amount * plan.daily_rate * plan.duration_days);
+
+          return (
+            <div key={plan.id} style={{ background:T.card, borderRadius:18, marginBottom:14, overflow:"hidden", boxShadow:"0 4px 16px rgba(0,0,0,0.08)", border:`0.5px solid ${T.border}`, opacity: isActive ? 0.7 : 1 }}>
+              {/* Plan header */}
+              <div style={{ background:meta.gradient, padding:"18px 20px", color:"white" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                  <div>
+                    <div style={{ fontSize:28, marginBottom:4 }}>{meta.icon}</div>
+                    <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
+                    <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
+                      {Math.round(plan.daily_rate * 100)}% daily · {plan.duration_days} days
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:11, opacity:0.75 }}>Total return</div>
+                    <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700 }}>
+                      {fmt(plan.amount + totalProfit)}
+                    </div>
+                    <div style={{ fontSize:11, opacity:0.75 }}>on {fmt(plan.amount)}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Plan details */}
+              <div style={{ padding:"14px 18px" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:14 }}>
+                  {[
+                    ["Buy-in", fmt(plan.amount)],
+                    ["Profit", fmt(totalProfit)],
+                    ["Duration", `${plan.duration_days}d`],
+                  ].map(([lbl, val]) => (
+                    <div key={lbl} style={{ textAlign:"center", background: dark ? "#142e20" : "#f7faf9", borderRadius:10, padding:"10px 6px" }}>
+                      <div style={{ fontSize:10, color:T.textSub, marginBottom:3 }}>{lbl}</div>
+                      <div style={{ fontWeight:700, fontSize:13, color:T.text }}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {isActive ? (
+                  <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", textAlign:"center", fontSize:13, fontWeight:600, color:BRAND_DARK }}>
+                    ✅ Plan active — earning now
+                  </div>
+                ) : (
+                  <button
+                    style={{ ...S.primaryBtn, background: meta.gradient, padding:"12px 0", fontSize:14 }}
+                    onClick={() => onBuyPlan({ ...plan, upgradeCost, hasLower, prevPlanName: prevPlan?.name })}
+                  >
+                    {hasLower ? `⬆ Upgrade from ${prevPlan.name} — pay ${fmt(upgradeCost)}` : `Invest ${fmt(plan.amount)} →`}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Investment history ── */}
+      {historyInvs.length > 0 && (
+        <div style={{ padding:"0 16px", marginBottom:20 }}>
+          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📜 History</div>
+          {historyInvs.map(inv => {
+            const meta = PLAN_META[inv.plan_name] ?? PLAN_META.Starter;
+            return (
+              <div key={inv.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", alignItems:"center", gap:12 }}>
+                <div style={{ width:40, height:40, borderRadius:12, background:meta.gradient, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>
+                  {meta.icon}
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{inv.plan_name} Plan</div>
+                  <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
+                    Matured {new Date(inv.credited_at ?? inv.ends_at).toLocaleDateString()}
+                  </div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:14 }}>+{fmt(inv.total_profit)}</div>
+                  <div style={{ fontSize:10, color:T.textSub }}>profit</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+// ── Active Investment Card (with live ticking profit) ──────────
+function ActiveInvestmentCard({ investment: inv, dark }) {
+  const T           = theme(dark);
+  const meta        = PLAN_META[inv.plan_name] ?? PLAN_META.Starter;
+  const liveProfit  = useLiveProfitCounter(inv);
+  const totalProfit = Math.floor(inv.amount * parseFloat(inv.daily_rate) * inv.duration_days);
+  const pct         = Math.min(100, Math.round((liveProfit / totalProfit) * 100));
+
+  const endsAt   = new Date(inv.ends_at);
+  const now      = new Date();
+  const msLeft   = Math.max(0, endsAt - now);
+  const daysLeft = Math.floor(msLeft / 86400000);
+  const hrsLeft  = Math.floor((msLeft % 86400000) / 3600000);
+
+  return (
+    <div style={{ background:T.card, borderRadius:18, marginBottom:12, overflow:"hidden", boxShadow:"0 4px 16px rgba(0,0,0,0.1)", border:`0.5px solid ${T.border}` }}>
+      <div style={{ background:meta.gradient, padding:"14px 18px", color:"white", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ fontSize:24 }}>{meta.icon}</span>
+          <div>
+            <div style={{ fontWeight:700, fontSize:16 }}>{inv.plan_name} Plan</div>
+            <div style={{ fontSize:11, opacity:0.8 }}>{Math.round(parseFloat(inv.daily_rate)*100)}%/day · {inv.duration_days} days</div>
+          </div>
+        </div>
+        <div style={{ textAlign:"right" }}>
+          <div style={{ fontSize:10, opacity:0.75 }}>Principal</div>
+          <div style={{ fontWeight:700, fontSize:15 }}>{fmt(inv.amount)}</div>
+        </div>
+      </div>
+
+      <div style={{ padding:"16px 18px" }}>
+        {/* Live profit counter */}
+        <div style={{ textAlign:"center", marginBottom:14, background: dark ? "#142e20" : "#f0faf6", borderRadius:14, padding:"14px" }}>
+          <div style={{ fontSize:10, color:T.textSub, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>
+            Profit earned so far
+          </div>
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:32, fontWeight:700, color:BRAND_DARK, letterSpacing:-1 }}>
+            {fmt(liveProfit)}
+          </div>
+          <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
+            of {fmt(totalProfit)} total · ticking up every second
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ marginBottom:10 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.textSub, marginBottom:5 }}>
+            <span>{pct}% complete</span>
+            <span>{daysLeft}d {hrsLeft}h remaining</span>
+          </div>
+          <div style={{ height:8, background: dark ? "#1a3d2b" : "#eee", borderRadius:4 }}>
+            <div style={{ height:"100%", width:`${pct}%`, background:`linear-gradient(90deg,${BRAND},${BRAND_DARK})`, borderRadius:4, transition:"width 1s linear" }} />
+          </div>
+        </div>
+
+        <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.textSub }}>
+          <span>Started {new Date(inv.starts_at).toLocaleDateString()}</span>
+          <span>Matures {new Date(inv.ends_at).toLocaleDateString()}</span>
+        </div>
+
+        {inv.locked_profit > 0 && (
+          <div style={{ background:"#FAEEDA", borderRadius:10, padding:"8px 12px", marginTop:10, fontSize:12, color:"#854F0B", fontWeight:500 }}>
+            🔒 +{fmt(inv.locked_profit)} locked profit from previous plan — paid at maturity
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Invest Modal ───────────────────────────────────────────────
+function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, dark }) {
+  const T           = theme(dark);
+  const meta        = PLAN_META[plan.name] ?? PLAN_META.Starter;
+  const [phone, setPhone]     = useState(profile?.phone ?? "");
+  const [method, setMethod]   = useState(detectMethod(profile?.phone));
+  const [loading, setLoading] = useState(false);
+  const [err, setErr]         = useState("");
+  const [step, setStep]       = useState("confirm"); // confirm | waiting | success
+
+  // Amount the user needs to actually pay
+  const amountToPay = plan.upgradeCost ?? plan.amount;
+  const totalProfit = Math.floor(plan.amount * plan.daily_rate * plan.duration_days);
+
+  const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
+
+  // Poll for balance change after LivePay prompt
+  const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
+    // Payment confirmed — now activate the plan in DB
+    try {
+      await buyInvestmentPlan(userId, plan.id, amountToPay);
+      setStep("success");
+      await onSuccess();
+    } catch (e) {
+      setErr(e.message ?? "Investment failed after payment");
+      setStep("confirm");
+    }
+  });
+
+  const handleSubmit = async () => {
+    setErr("");
+    if (!phone) return setErr("Enter your mobile money number");
+    setLoading(true);
+    try {
+      await requestInvestmentPayment(userId, amountToPay, method, phone);
+      startPolling(profile?.balance ?? 0);
+      setStep("waiting");
+    } catch (e) {
+      setErr(e.message ?? "Payment request failed");
+    }
+    setLoading(false);
+  };
+
+  if (step === "success") {
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
+        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
+          <div style={{ fontSize:64, marginBottom:16 }}>{meta.icon}</div>
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>
+            {plan.name} Plan Active!
+          </div>
+          <div style={{ fontSize:14, color:T.textSub, marginBottom:8, lineHeight:1.7 }}>
+            Your investment is now growing. Come back to watch your profits tick up in real time.
+          </div>
+          <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px", marginBottom:24 }}>
+            <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Expected profit at maturity</div>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:28, fontWeight:700, color:BRAND_DARK }}>{fmt(totalProfit)}</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>in {plan.duration_days} days</div>
+          </div>
+          <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px", background:meta.gradient }} onClick={onClose}>
+            Watch it grow →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "waiting") {
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
+        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
+          <div style={{ width:72, height:72, borderRadius:"50%", border:`4px solid ${dark ? "#2a5040" : "#eee"}`, borderTopColor:BRAND, margin:"0 auto 24px", animation:"spin 1s linear infinite" }} />
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:20, fontWeight:700, color:T.text, marginBottom:10 }}>
+            Waiting for payment...
+          </div>
+          <div style={{ fontSize:14, color:T.textSub, lineHeight:1.7, marginBottom:8 }}>
+            A payment prompt has been sent to
+          </div>
+          <div style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:8 }}>{phone}</div>
+          <div style={{ fontSize:13, color:T.textSub, lineHeight:1.7, marginBottom:24 }}>
+            Enter your {method.toUpperCase()} PIN to pay <strong style={{ color:T.text }}>{fmt(amountToPay)}</strong>.
+            Your {plan.name} plan activates automatically once confirmed.
+          </div>
+          <button onClick={() => { stopPolling(); setStep("confirm"); }} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"10px 24px", fontSize:13, color:T.textSub, cursor:"pointer" }}>
+            Cancel
+          </button>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
+
+        {/* Coloured header */}
+        <div style={{ background:meta.gradient, padding:"20px 22px", color:"white" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+            <div>
+              <div style={{ fontSize:28, marginBottom:4 }}>{meta.icon}</div>
+              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>
+                {plan.hasLower ? `Upgrade to ${plan.name}` : `${plan.name} Plan`}
+              </div>
+              <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
+                {Math.round(plan.daily_rate * 100)}% daily return · {plan.duration_days} days
+              </div>
+            </div>
+            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
+          </div>
+        </div>
+
+        <div style={{ padding:"20px 22px 32px" }}>
+          {/* Summary cards */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+            {[
+              ["You pay", fmt(amountToPay)],
+              ["You earn", fmt(totalProfit)],
+              ["Duration", `${plan.duration_days} days`],
+              ["Daily rate", `${Math.round(plan.daily_rate*100)}%`],
+            ].map(([lbl, val]) => (
+              <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
+                <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
+                <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{val}</div>
+              </div>
+            ))}
+          </div>
+
+          {plan.hasLower && (
+            <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:12, color:BRAND_DARK, marginBottom:14 }}>
+              ✅ Your <strong>{plan.prevPlanName}</strong> plan keeps running and pays out at its own maturity.
+              You only pay the difference: <strong>{fmt(amountToPay)}</strong>
+            </div>
+          )}
+
+          {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+
+          <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Mobile money number</label>
+          <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:8 }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
+          <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5", marginBottom:16 }}>
+            📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
+          </div>
+
+          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:meta.gradient }} onClick={handleSubmit} disabled={loading}>
+            {loading ? "Sending prompt..." : `Pay ${fmt(amountToPay)} & activate →`}
+          </button>
+          <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:10, lineHeight:1.6 }}>
+            Profit of {fmt(totalProfit)} credited to your balance at maturity.
+            Principal also returned in full.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Withdraw Modal ─────────────────────────────────────────────
@@ -1789,6 +2326,8 @@ function ProfileTab({ profile, onSignOut, onActivate, onDeposit, dark }) {
           { label:"Member since",    value: profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : "—" },
           { label:"Total earned",    value: fmt(profile?.total_earned) },
           { label:"Tasks completed", value: profile?.tasks_done ?? 0 },
+          { label:"VIP Tier",        value: VIP_TIERS[profile?.vip_tier ?? "bronze"]?.label ?? "🥉 Bronze" },
+          { label:"Total invested",  value: fmt(profile?.total_invested) },
           { label:"Referral code",   value: profile?.referral_code ?? "—" },
           { label:"Account status",  value: profile?.activated ? "⚡ Activated" : "⏳ Not activated" },
           { label:"KYC status",      value: profile?.kyc_verified ? "✓ Verified" : "⏳ Pending" },
