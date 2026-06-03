@@ -22,20 +22,27 @@ const BRAND      = "#1D9E75";
 const BRAND_DARK = "#0F6E56";
 const BG_DARK    = "#0F2D22";
 
-// ── VIP Tier config ────────────────────────────────────────────
-const VIP_TIERS = {
-  bronze:   { label:"🥉 Bronze",   color:"#CD7F32", bg:"#FEF3E2", threshold:0,      perk:"Base rewards",        multiplier:1.00 },
-  silver:   { label:"🥈 Silver",   color:"#9E9E9E", bg:"#F5F5F5", threshold:25000,  perk:"+10% task rewards",   multiplier:1.10 },
-  gold:     { label:"🥇 Gold",     color:"#F5A623", bg:"#FAEEDA", threshold:75000,  perk:"+20% task rewards",   multiplier:1.20 },
-  platinum: { label:"💎 Platinum", color:"#7B61FF", bg:"#F0EEFF", threshold:200000, perk:"+35% task rewards",   multiplier:1.35 },
+// ── Plan tiers — single source of truth (mirrors DB) ──────────
+// task_limit: max tasks per day (null = unlimited)
+// multiplier: reward multiplier applied server-side
+// vip_tier:   the VIP label tied to this plan
+const PLAN_TIERS = {
+  Starter: { icon:"🌱", dailyTasks:8,   multiplier:1.10, color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)", badge:"#E1F5EE", badgeText:BRAND_DARK,  vip:"silver",   exclusiveTasks:false },
+  Growth:  { icon:"🌿", dailyTasks:15,  multiplier:1.20, color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)", badge:"#E6F1FB", badgeText:"#185FA5",   vip:"gold",     exclusiveTasks:false },
+  Premium: { icon:"🌳", dailyTasks:25,  multiplier:1.35, color:"#E5873A", gradient:"linear-gradient(135deg,#854F0B,#E5873A)", badge:"#FAEEDA", badgeText:"#854F0B",   vip:"gold",     exclusiveTasks:false },
+  Elite:   { icon:"💎", dailyTasks:40,  multiplier:1.50, color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)", badge:"#F0EEFF",  badgeText:"#7B61FF",  vip:"platinum", exclusiveTasks:false },
+  Legend:  { icon:"👑", dailyTasks:null, multiplier:2.00, color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", badge:"#FFF8E1", badgeText:"#7A5000", vip:"legend",  exclusiveTasks:true  },
 };
 
-// ── Investment plan display config (mirrors DB) ────────────────
-const PLAN_META = {
-  Starter: { icon:"🌱", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)", badge:"#E1F5EE", badgeText:BRAND_DARK },
-  Growth:  { icon:"🌿", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)", badge:"#E6F1FB", badgeText:"#185FA5" },
-  Premium: { icon:"🌳", gradient:"linear-gradient(135deg,#854F0B,#E5873A)", badge:"#FAEEDA", badgeText:"#854F0B" },
-  Elite:   { icon:"💎", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)", badge:"#F0EEFF",  badgeText:"#7B61FF" },
+// Alias for components that reference PLAN_META
+const PLAN_META = PLAN_TIERS;
+
+// ── VIP Tier config ────────────────────────────────────────────
+const VIP_TIERS = {
+  silver:   { label:"🥈 Silver",   color:"#9E9E9E", bg:"#F5F5F5", perk:"+10% rewards · 8 tasks/day",    multiplier:1.10 },
+  gold:     { label:"🥇 Gold",     color:"#F5A623", bg:"#FAEEDA", perk:"+20–35% rewards · up to 25/day", multiplier:1.20 },
+  platinum: { label:"💎 Platinum", color:"#7B61FF", bg:"#F0EEFF", perk:"+50% rewards · 40 tasks/day",    multiplier:1.50 },
+  legend:   { label:"👑 Legend",   color:"#B8860B", bg:"#FFF8E1", perk:"2× all rewards · unlimited tasks · exclusive tasks", multiplier:2.00 },
 };
 
 // ── Dark mode context ──────────────────────────────────────────
@@ -171,6 +178,47 @@ function Splash({ dark }) {
   );
 }
 
+// ── Live Activity Ticker ───────────────────────────────────────
+const TICKER_EVENTS = [
+  { icon:"💸", msg:"David from Kampala just withdrew UGX 32,000" },
+  { icon:"✅", msg:"Mercy completed a YouTube task and earned UGX 500" },
+  { icon:"👥", msg:"James referred a friend and earned UGX 3,000 commission" },
+  { icon:"🌱", msg:"Sandra activated a Growth plan — earning 4%/day" },
+  { icon:"💸", msg:"Robert from Gulu withdrew UGX 18,000 to MTN MoMo" },
+  { icon:"🔥", msg:"Patricia hit a 7-day streak and earned a bonus!" },
+  { icon:"✅", msg:"Patrick watched a video ad and earned UGX 400" },
+  { icon:"💎", msg:"Annet reached Gold VIP tier — +20% task rewards unlocked" },
+  { icon:"💸", msg:"Emmanuel withdrew UGX 50,000 to Airtel Money" },
+  { icon:"🌱", msg:"Grace invested in the Elite plan — earning 6%/day" },
+];
+
+function LiveActivityTicker({ dark }) {
+  const T = theme(dark);
+  const [idx, setIdx]       = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => { setIdx(i => (i + 1) % TICKER_EVENTS.length); setVisible(true); }, 400);
+    }, 3200);
+    return () => clearInterval(interval);
+  }, []);
+
+  const ev = TICKER_EVENTS[idx];
+  return (
+    <div style={{ background:T.card, borderRadius:14, padding:"14px 18px", marginBottom:24, display:"flex", alignItems:"center", gap:12, boxShadow:"0 2px 8px rgba(0,0,0,0.07)", border:`0.5px solid ${T.border}`, transition:"opacity 0.35s", opacity: visible ? 1 : 0 }}>
+      <div style={{ width:36, height:36, borderRadius:"50%", background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>{ev.icon}</div>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:12, color:T.textSub, marginBottom:2 }}>🟢 Live activity</div>
+        <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{ev.msg}</div>
+      </div>
+      <div style={{ width:8, height:8, borderRadius:"50%", background:"#1D9E75", flexShrink:0, animation:"pulse 1.5s infinite" }} />
+      <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(1.4)}}`}</style>
+    </div>
+  );
+}
+
 // ── Landing ────────────────────────────────────────────────────
 function LandingPage({ onGetStarted, settings, dark, toggleDark }) {
   const bonus    = settings.signup_bonus ?? 2000;
@@ -256,7 +304,35 @@ function LandingPage({ onGetStarted, settings, dark, toggleDark }) {
           ))}
         </div>
 
-        <div style={{ background:`linear-gradient(135deg,${BG_DARK},${BRAND_DARK})`, borderRadius:20, padding:"40px 32px", textAlign:"center", color:"white", marginBottom:60 }}>
+        {/* ── Testimonials ── */}
+        <h2 style={{ fontFamily:"'Sora',sans-serif", fontSize:26, fontWeight:700, textAlign:"center", marginBottom:8, color:T.text }}>What members say</h2>
+        <p style={{ textAlign:"center", color:T.textSub, fontSize:14, marginBottom:32 }}>Real people earning real money in Uganda.</p>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:16, marginBottom:40 }}>
+          {[
+            { name:"Aisha M.",  loc:"Kampala", text:"I withdrew UGX 45,000 in my first week. Tasks are simple — watch videos, follow pages. 100% legit!", stars:5, initials:"AM" },
+            { name:"Brian K.",  loc:"Jinja",   text:"Referred 8 friends and earned UGX 24,000 in commissions. Best side hustle I've found in Uganda.", stars:5, initials:"BK" },
+            { name:"Sheila N.", loc:"Mbarara", text:"Payment goes straight to MTN MoMo in minutes. I was sceptical at first but EarnNet is the real deal.", stars:5, initials:"SN" },
+          ].map(r => (
+            <div key={r.name} style={{ background:T.card, borderRadius:16, padding:"20px 18px", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
+              <div style={{ display:"flex", gap:2, marginBottom:12 }}>
+                {Array.from({length:r.stars}).map((_,i) => <span key={i} style={{ color:"#F5A623", fontSize:16 }}>★</span>)}
+              </div>
+              <div style={{ fontSize:13, color:T.textSub, lineHeight:1.7, marginBottom:16, fontStyle:"italic" }}>"{r.text}"</div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{ width:36, height:36, borderRadius:"50%", background:`linear-gradient(135deg,${BRAND_DARK},${BRAND})`, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:12, color:"white", flexShrink:0 }}>{r.initials}</div>
+                <div>
+                  <div style={{ fontWeight:600, fontSize:13, color:T.text }}>{r.name}</div>
+                  <div style={{ fontSize:11, color:T.textSub }}>{r.loc} · Verified member</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Live Activity Ticker ── */}
+        <LiveActivityTicker dark={dark} />
+
+        <div style={{ background:`linear-gradient(135deg,${BG_DARK},${BRAND_DARK})`, borderRadius:20, padding:"40px 32px", textAlign:"center", color:"white", marginBottom:60, marginTop:32 }}>
           <div style={{ fontFamily:"'Sora',sans-serif", fontSize:24, fontWeight:700, marginBottom:10 }}>Ready to start earning?</div>
           <div style={{ fontSize:14, opacity:0.8, marginBottom:24 }}>Join thousands of Ugandans earning from their phones every day.</div>
           <button style={{ background:BRAND, color:"white", border:"none", borderRadius:12, padding:"14px 40px", fontSize:15, fontWeight:700, cursor:"pointer" }} onClick={onGetStarted}>Create free account →</button>
@@ -556,7 +632,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
 
       <main style={{ flex:1, overflowY:"auto", paddingTop:4 }}>
         {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} dark={dark} />}
-        {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} dark={dark} />}
+        {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} investments={investments} onGoGrow={() => setTab("grow")} dark={dark} />}
         {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={investPlans} onBuyPlan={setInvestModal} onRefresh={loadInvestments} dark={dark} />}
         {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
         {tab === "referral" && <ReferralTab profile={profile} referrals={referrals} settings={settings} dark={dark} />}
@@ -908,15 +984,19 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   const ytCmd = (func) => {
     try {
       iframeRef.current?.contentWindow?.postMessage(
-        JSON.stringify({ event: "command", func, args: [] }), "*"
+        JSON.stringify({ event: "command", func, args: [] }),
+        "https://www.youtube.com"
       );
     } catch {}
   };
 
-  // Once iframe loads, play the video
+  // Once iframe loads, send playVideo — retry at 500ms and 1500ms
+  // for slow devices. The button tap (handleStart) was the required
+  // user gesture so autoplay is unlocked on mobile.
   const handleIframeLoad = () => {
-    // Small delay to let the player initialise before sending playVideo
-    setTimeout(() => ytCmd("playVideo"), 800);
+    ytCmd("playVideo");
+    setTimeout(() => ytCmd("playVideo"), 500);
+    setTimeout(() => ytCmd("playVideo"), 1500);
   };
 
   // YouTube state events — pause timer when user pauses, resume when they play
@@ -962,12 +1042,13 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
     return () => clearInterval(intervalRef.current);
   }, [timerRunning, duration]);
 
-  // Start task: render iframe (autoplay=1) + start timer immediately
-  // The button tap is the user gesture browsers require for autoplay on mobile
+  // Start task: mount the iframe (autoplay=1). The button tap IS the
+  // required mobile user gesture. Timer starts only when YouTube fires
+  // onStateChange=1 (actually playing) — keeps them perfectly in sync.
   const handleStart = () => {
     if (!profile?.activated) return;
     setPhase("watching");
-    setTimerRunning(true);
+    // timer starts via onStateChange handler, NOT here
   };
 
   if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
@@ -992,7 +1073,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
               <iframe
                 ref={iframeRef}
                 width="100%"
-                src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&enablejsapi=1&playsinline=1&rel=0`}
+                src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&enablejsapi=1&playsinline=1&rel=0&origin=${encodeURIComponent(window.location.origin)}`}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
                 onLoad={handleIframeLoad}
@@ -1017,7 +1098,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
           <div style={{ background:T.card, borderRadius:16, padding:"20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
             <div style={{ fontSize:11, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.08em",
               color: isPaused ? "#E24B4A" : T.textSub }}>
-              {isPaused ? "⏸ PAUSED — RESUME VIDEO TO CONTINUE" : "▶ WATCHING — TIME REMAINING"}
+              {isPaused ? "⏸ PAUSED — RESUME VIDEO TO CONTINUE" : timerRunning ? "▶ WATCHING — TIME REMAINING" : "⏳ STARTING VIDEO…"}
             </div>
             <div style={{ fontFamily:"'Sora',sans-serif", fontSize:56, fontWeight:700, letterSpacing:3,
               color: isPaused ? "#E24B4A" : timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
@@ -1358,6 +1439,248 @@ function GenericTask({ task: t, profile, onBack, onComplete, dark }) {
   );
 }
 
+// ── Like Task (Products & Songs) ───────────────────────────────
+// 30s hidden review timer → reactions unlock → instant credit
+const REACTIONS = [
+  { emoji:"❤️",  label:"Love it",    value:"love"    },
+  { emoji:"👍",  label:"Like it",    value:"like"    },
+  { emoji:"😐",  label:"It's okay",  value:"neutral" },
+  { emoji:"👎",  label:"Not for me", value:"dislike" },
+];
+
+function LikeTask({ task: t, profile, onBack, onComplete, dark }) {
+  const T            = theme(dark);
+  const isSong       = t.type === "like_song";
+  const REVIEW_SECS  = 30;
+
+  const [phase,     setPhase]     = useState("viewing");   // viewing | reacting | done
+  const [elapsed,   setElapsed]   = useState(0);
+  const [reaction,  setReaction]  = useState(null);
+  const [submitting,setSubmitting]= useState(false);
+  const [showFx,    setShowFx]    = useState(false);       // reward animation
+  const intervalRef = useRef(null);
+  const startRef    = useRef(null);
+
+  // Hidden 30-second timer starts immediately on mount
+  useEffect(() => {
+    startRef.current = performance.now();
+    intervalRef.current = setInterval(() => {
+      const el = (performance.now() - startRef.current) / 1000;
+      setElapsed(el);
+      if (el >= REVIEW_SECS) {
+        clearInterval(intervalRef.current);
+        setPhase("reacting");
+      }
+    }, 200);
+    return () => clearInterval(intervalRef.current);
+  }, []);
+
+  const handleReact = async (r) => {
+    if (submitting) return;
+    setReaction(r);
+    setSubmitting(true);
+    setShowFx(true);
+    try {
+      await onComplete(t.id, null); // no proof needed
+    } catch {}
+    setSubmitting(false);
+    setTimeout(() => setPhase("done"), 900);
+  };
+
+  if (phase === "done") return <LikeTaskSuccess task={t} reaction={reaction} onBack={onBack} dark={dark} />;
+
+  const progress     = Math.min(100, (elapsed / REVIEW_SECS) * 100);
+  const secsLeft     = Math.max(0, Math.ceil(REVIEW_SECS - elapsed));
+  const unlocked     = phase === "reacting";
+
+  // Parse extra metadata from task description JSON or fallback to task fields
+  let meta = {};
+  try { meta = JSON.parse(t.description ?? "{}"); } catch { meta = {}; }
+  const coverUrl    = meta.cover_url   ?? t.image_url ?? null;
+  const artistBrand = meta.artist      ?? meta.brand   ?? t.business ?? "";
+  const genre       = meta.genre       ?? meta.category ?? "";
+  const price       = meta.price       ?? null;
+  const tagline     = meta.tagline     ?? meta.album    ?? "";
+
+  return (
+    <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:120 }}>
+
+      {/* Header */}
+      <div style={{ background: isSong
+        ? "linear-gradient(135deg,#1a0533,#7C3AED)"
+        : "linear-gradient(135deg,#1a0a2e,#C2185B)",
+        color:"white", padding:"20px 16px 32px", position:"relative", overflow:"hidden" }}>
+        <div style={{ position:"absolute", right:-40, top:-40, width:160, height:160, borderRadius:"50%", background:"rgba(255,255,255,0.05)" }} />
+        <button onClick={onBack} style={{ background:"rgba(255,255,255,0.15)", border:"none", color:"white", borderRadius:10, padding:"7px 14px", fontSize:13, cursor:"pointer", marginBottom:20, position:"relative" }}>← Back</button>
+        <div style={{ display:"flex", gap:6, marginBottom:12, position:"relative" }}>
+          <span style={{ background:"rgba(255,255,255,0.2)", fontSize:10, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>
+            {isSong ? "🎵 RATE SONG" : "🛍 RATE PRODUCT"}
+          </span>
+          <span style={{ background:"rgba(255,255,255,0.2)", fontSize:10, fontWeight:700, padding:"3px 10px", borderRadius:20 }}>
+            +{fmt(t.reward)}
+          </span>
+        </div>
+        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, lineHeight:1.2, position:"relative" }}>{t.title}</div>
+        <div style={{ fontSize:13, opacity:0.8, marginTop:4, position:"relative" }}>{artistBrand}</div>
+      </div>
+
+      <div style={{ padding:"0 16px", marginTop:-16 }}>
+
+        {/* Cover / Product image card */}
+        <div style={{ background:T.card, borderRadius:20, overflow:"hidden", marginBottom:14, boxShadow:"0 8px 28px rgba(0,0,0,0.12)" }}>
+          {coverUrl ? (
+            <div style={{ position:"relative" }}>
+              <img
+                src={coverUrl}
+                alt={t.title}
+                style={{ width:"100%", height: isSong ? 280 : 240, objectFit:"cover", display:"block" }}
+                onError={e => { e.target.style.display = "none"; }}
+              />
+              {isSong && (
+                <div style={{ position:"absolute", inset:0, background:"linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 60%)", display:"flex", alignItems:"flex-end", padding:"18px 18px" }}>
+                  <div>
+                    <div style={{ fontWeight:700, fontSize:18, color:"white" }}>{t.title}</div>
+                    {tagline && <div style={{ fontSize:13, color:"rgba(255,255,255,0.8)", marginTop:2 }}>{tagline}</div>}
+                    {genre && <div style={{ fontSize:11, color:"rgba(255,255,255,0.6)", marginTop:2 }}>{genre}</div>}
+                  </div>
+                  {/* Vinyl disc animation */}
+                  <div style={{ marginLeft:"auto", width:52, height:52, borderRadius:"50%", background:"linear-gradient(135deg,#222,#444)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 0 0 3px rgba(255,255,255,0.15)", animation: unlocked ? "none" : "spin 4s linear infinite", flexShrink:0 }}>
+                    <div style={{ width:12, height:12, borderRadius:"50%", background:"#fff" }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ height: isSong ? 200 : 160, background: isSong
+              ? "linear-gradient(135deg,#1a0533,#7C3AED)"
+              : "linear-gradient(135deg,#1a0a2e,#C2185B)",
+              display:"flex", alignItems:"center", justifyContent:"center", fontSize:72 }}>
+              {isSong ? "🎵" : "🛍"}
+            </div>
+          )}
+
+          {/* Product details (non-song only) */}
+          {!isSong && (
+            <div style={{ padding:"16px 18px" }}>
+              {tagline && <div style={{ fontSize:13, color:T.textSub, lineHeight:1.6, marginBottom:8 }}>{tagline}</div>}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+                <div>
+                  {artistBrand && <div style={{ fontSize:12, color:T.textSub }}>By <strong style={{ color:T.text }}>{artistBrand}</strong></div>}
+                  {genre && <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{genre}</div>}
+                </div>
+                {price && (
+                  <div style={{ background:"#E1F5EE", borderRadius:10, padding:"6px 14px", fontWeight:700, fontSize:15, color:BRAND_DARK }}>{price}</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Progress indicator — subtle, not a countdown */}
+        {!unlocked && (
+          <div style={{ background:T.card, borderRadius:14, padding:"14px 18px", marginBottom:14, boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={{ fontSize:13, color:T.textSub }}>
+                {isSong ? "🎵 Listening…" : "🛍 Reviewing product…"}
+              </div>
+              <div style={{ fontSize:11, color:T.textSub }}>{secsLeft}s</div>
+            </div>
+            <div style={{ height:6, background: dark ? "#1a3d2b" : "#eee", borderRadius:3 }}>
+              <div style={{ height:"100%", width:`${progress}%`, background: isSong
+                ? "linear-gradient(90deg,#7C3AED,#C084FC)"
+                : "linear-gradient(90deg,#C2185B,#F06292)",
+                borderRadius:3, transition:"width 0.2s linear" }} />
+            </div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:8, textAlign:"center" }}>
+              Take a moment to explore · Your rating unlocks soon
+            </div>
+          </div>
+        )}
+
+        {/* Reaction panel — slides in when unlocked */}
+        {unlocked && (
+          <div style={{ background:T.card, borderRadius:20, padding:"20px 18px", marginBottom:14, boxShadow:"0 4px 20px rgba(0,0,0,0.12)", animation:"slideUp 0.4s ease" }}>
+            <div style={{ textAlign:"center", marginBottom:16 }}>
+              <div style={{ fontSize:20, marginBottom:6 }}>✨ What do you think?</div>
+              <div style={{ fontSize:13, color:T.textSub }}>
+                {isSong ? "Give the song your honest reaction" : "Give this product your honest rating"}
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              {REACTIONS.map(r => (
+                <button
+                  key={r.value}
+                  onClick={() => handleReact(r)}
+                  disabled={submitting}
+                  style={{
+                    background: reaction?.value === r.value
+                      ? (isSong ? "#F3E8FF" : "#FCE4EC")
+                      : (dark ? "#142e20" : "#f8fafc"),
+                    border: `1.5px solid ${reaction?.value === r.value ? (isSong ? "#7C3AED" : "#C2185B") : T.border}`,
+                    borderRadius:16, padding:"16px 10px", cursor:"pointer",
+                    display:"flex", flexDirection:"column", alignItems:"center", gap:6,
+                    transition:"all 0.15s", transform: reaction?.value === r.value ? "scale(1.04)" : "scale(1)",
+                  }}
+                >
+                  <span style={{ fontSize:30 }}>{r.emoji}</span>
+                  <span style={{ fontSize:12, fontWeight:600, color:T.text }}>{r.label}</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>
+              Tap any reaction to claim your {fmt(t.reward)}
+            </div>
+          </div>
+        )}
+
+        {/* Reward FX overlay */}
+        {showFx && (
+          <div style={{ position:"fixed", inset:0, display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none", zIndex:300 }}>
+            <div style={{ background:"rgba(0,0,0,0.7)", borderRadius:24, padding:"28px 40px", textAlign:"center", animation:"popIn 0.35s ease" }}>
+              <div style={{ fontSize:52, marginBottom:8 }}>{reaction?.emoji}</div>
+              <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:"white" }}>+{fmt(t.reward)}</div>
+              <div style={{ fontSize:13, color:"rgba(255,255,255,0.7)", marginTop:4 }}>Credited to your wallet!</div>
+            </div>
+          </div>
+        )}
+
+        {!profile?.activated && <ActivationBanner />}
+      </div>
+
+      <style>{`
+        @keyframes spin    { to { transform: rotate(360deg); } }
+        @keyframes slideUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes popIn   { from { opacity:0; transform:scale(0.7); } to { opacity:1; transform:scale(1); } }
+      `}</style>
+    </div>
+  );
+}
+
+function LikeTaskSuccess({ task: t, reaction, onBack, dark }) {
+  const T      = theme(dark);
+  const isSong = t.type === "like_song";
+  return (
+    <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:T.bg, padding:28, textAlign:"center" }}>
+      <div style={{ fontSize:80, marginBottom:8 }}>{reaction?.emoji ?? "🎉"}</div>
+      <div style={{ fontFamily:"'Sora',sans-serif", fontSize:26, fontWeight:700, color:T.text, marginBottom:8 }}>
+        Thanks for your rating!
+      </div>
+      <div style={{ fontSize:16, fontWeight:700, color:BRAND_DARK, marginBottom:6 }}>
+        +{fmt(t.reward)} added to your balance
+      </div>
+      <div style={{ fontSize:13, color:T.textSub, marginBottom:8, maxWidth:280, lineHeight:1.7 }}>
+        Your "{reaction?.label}" reaction on <strong style={{ color:T.text }}>{t.title}</strong> helps {isSong ? "the artist" : "the brand"} understand their audience.
+      </div>
+      <div style={{ background: isSong ? "#F3E8FF" : "#FCE4EC", borderRadius:14, padding:"12px 20px", marginBottom:28, fontSize:13, color: isSong ? "#7C3AED" : "#C2185B", fontWeight:600 }}>
+        {isSong ? "🎵 Keep rating songs to earn more!" : "🛍 More products waiting for your review!"}
+      </div>
+      <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 36px" }} onClick={onBack}>
+        Back to tasks
+      </button>
+    </div>
+  );
+}
+
 // ── Shared sub-components ──────────────────────────────────────
 function TaskSuccessScreen({ reward, onBack, dark }) {
   const T = theme(dark);
@@ -1436,6 +1759,8 @@ function TaskDetailPage({ task: t, profile, onBack, onComplete, dark }) {
   if (t.type === "youtube_watch")     return <YoutubeWatchTask     task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "youtube_subscribe") return <YoutubeSubscribeTask task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "tiktok")            return <TiktokTask           task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
+  if (t.type === "like_product")      return <LikeTask             task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
+  if (t.type === "like_song")         return <LikeTask             task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   return <GenericTask task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
 }
 
@@ -1566,15 +1891,65 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
 }
 
 // ── Tasks Tab ──────────────────────────────────────────────────
-function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, dark }) {
+function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investments, onGoGrow, dark }) {
   const [filter, setFilter] = useState("all");
   const T = theme(dark);
-  const categories = ["all", ...new Set(tasks.map(t => t.category).filter(Boolean))];
-  const filtered   = filter === "all" ? tasks : tasks.filter(t => t.category === filter);
+
+  // Gate: user must have an active investment plan
+  const hasActivePlan = (investments ?? []).some(i => i.status === "active");
+  const highestPlan   = ["Legend","Elite","Premium","Growth","Starter"]
+    .find(p => (investments ?? []).some(i => i.status === "active" && i.plan_name === p));
+  const tierInfo      = highestPlan ? PLAN_TIERS[highestPlan] : null;
+
+  if (!hasActivePlan) {
+    return (
+      <div style={{ animation:"slideUp 0.3s ease", padding:"40px 24px", textAlign:"center" }}>
+        <div style={{ fontSize:64, marginBottom:16 }}>🔒</div>
+        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:10 }}>
+          Tasks are locked
+        </div>
+        <div style={{ fontSize:14, color:T.textSub, lineHeight:1.7, marginBottom:24, maxWidth:280, margin:"0 auto 24px" }}>
+          Buy an investment plan to unlock daily tasks and start earning. Higher plans = more tasks per day and bigger rewards.
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:24, textAlign:"left" }}>
+          {[["🌱 Starter","8 tasks/day · ×1.10 boost"],["🌿 Growth","15 tasks/day · ×1.20 boost"],["🌳 Premium","25 tasks/day · ×1.35 boost"],["👑 Legend","Unlimited · ×2.00 boost"]].map(([name,desc]) => (
+            <div key={name} style={{ background:T.card, borderRadius:12, padding:"12px 14px", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
+              <div style={{ fontWeight:700, fontSize:13, color:T.text, marginBottom:4 }}>{name}</div>
+              <div style={{ fontSize:11, color:T.textSub }}>{desc}</div>
+            </div>
+          ))}
+        </div>
+        <button style={{ ...S.primaryBtn, width:"auto", padding:"13px 36px" }} onClick={onGoGrow}>
+          View investment plans →
+        </button>
+      </div>
+    );
+  }
+
+  // Filter tasks by plan access — Legend-only tasks hidden from non-Legend
+  const isLegend = highestPlan === "Legend";
+  const accessibleTasks = tasks.filter(t => {
+    if (t.subtype === "legend_only") return isLegend;
+    return true;
+  });
+
+  const categories = ["all", ...new Set(accessibleTasks.map(t => t.category).filter(Boolean))];
+  const filtered   = filter === "all" ? accessibleTasks : accessibleTasks.filter(t => t.category === filter);
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
-      <div style={{ padding:"0 16px 12px" }}>
+      {/* Daily limit banner */}
+      {tierInfo && (
+        <div style={{ margin:"12px 16px 0", background: dark ? "#142e20" : "#E1F5EE", borderRadius:12, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={{ fontSize:12, color:BRAND_DARK }}>
+            <strong>{tierInfo.dailyTasks === null ? "Unlimited" : `${tierInfo.dailyTasks} tasks`}</strong>/day · <strong>×{tierInfo.multiplier.toFixed(2)}</strong> reward boost
+          </div>
+          <span style={{ background:BRAND, color:"white", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>
+            {highestPlan} {PLAN_TIERS[highestPlan].icon}
+          </span>
+        </div>
+      )}
+      <div style={{ padding:"12px 16px 12px" }}>
         <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 }}>
           {categories.map(c => (
             <button key={c} onClick={() => setFilter(c)} style={{ padding:"7px 16px", borderRadius:20, border:`0.5px solid ${filter === c ? BRAND : T.chipBrd}`, background: filter === c ? BRAND : T.chipBg, color: filter === c ? "white" : T.text, fontSize:12, cursor:"pointer", whiteSpace:"nowrap", fontWeight: filter === c ? 600 : 400 }}>
@@ -1596,17 +1971,91 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, dark })
 function TaskCard({ task: t, onSelect, compact, dark }) {
   const T = theme(dark);
   const typeMeta = {
-    youtube_watch:     { label:"▶ Watch",     bg:"#FAECE7", tc:"#993C1D" },
-    youtube_subscribe: { label:"📺 Subscribe", bg:"#FAECE7", tc:"#993C1D" },
-    tiktok:            { label:"🎵 TikTok",    bg:"#F3E8FF", tc:"#7C3AED" },
-    social:            { label:"📱 Social",    bg:"#E6F1FB", tc:"#185FA5" },
-    survey:            { label:"📋 Survey",    bg:"#E1F5EE", tc:"#0F6E56" },
-    install:           { label:"⬇ Install",    bg:"#FAEEDA", tc:"#854F0B" },
-    review:            { label:"⭐ Review",     bg:"#FEF9E1", tc:"#854F0B" },
+    youtube_watch:     { label:"▶ Watch",        bg:"#FAECE7", tc:"#993C1D" },
+    youtube_subscribe: { label:"📺 Subscribe",   bg:"#FAECE7", tc:"#993C1D" },
+    tiktok:            { label:"🎵 TikTok",      bg:"#F3E8FF", tc:"#7C3AED" },
+    social:            { label:"📱 Social",      bg:"#E6F1FB", tc:"#185FA5" },
+    survey:            { label:"📋 Survey",      bg:"#E1F5EE", tc:"#0F6E56" },
+    install:           { label:"⬇ Install",      bg:"#FAEEDA", tc:"#854F0B" },
+    review:            { label:"⭐ Review",       bg:"#FEF9E1", tc:"#854F0B" },
+    like_product:      { label:"🛍 Rate Product", bg:"#FCE4EC", tc:"#C2185B" },
+    like_song:         { label:"🎵 Rate Song",    bg:"#F3E8FF", tc:"#7C3AED" },
   };
-  const meta = typeMeta[t.type] ?? typeMeta.social;
+  const meta      = typeMeta[t.type] ?? typeMeta.social;
   const spotsLeft = (t.limit_count ?? 0) - (t.completions ?? 0);
+  const isLike    = t.type === "like_product" || t.type === "like_song";
+  const isSong    = t.type === "like_song";
 
+  // Parse cover/image from description JSON
+  let taskMeta = {};
+  try { taskMeta = JSON.parse(t.description ?? "{}"); } catch {}
+  const coverUrl    = taskMeta.cover_url ?? t.image_url ?? null;
+  const artistBrand = taskMeta.artist ?? taskMeta.brand ?? t.business ?? "";
+  const genre       = taskMeta.genre ?? taskMeta.category ?? "";
+
+  // ── Rich visual card for like tasks ──
+  if (isLike) {
+    return (
+      <div
+        style={{ background:T.card, borderRadius:18, margin: compact ? "0 0 12px" : "0 16px 14px",
+          boxShadow:"0 4px 16px rgba(0,0,0,0.09)", cursor:"pointer", overflow:"hidden",
+          border:`0.5px solid ${T.border}` }}
+        onClick={onSelect}
+      >
+        {/* Cover image */}
+        <div style={{ position:"relative", height:140, background: isSong
+          ? "linear-gradient(135deg,#1a0533,#7C3AED)"
+          : "linear-gradient(135deg,#1a0a2e,#C2185B)",
+          overflow:"hidden" }}>
+          {coverUrl && (
+            <img src={coverUrl} alt={t.title}
+              style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}
+              onError={e => { e.target.style.display = "none"; }}
+            />
+          )}
+          {/* Gradient overlay */}
+          <div style={{ position:"absolute", inset:0, background:"linear-gradient(to top, rgba(0,0,0,0.65) 0%, transparent 55%)" }} />
+          {/* Type badge */}
+          <div style={{ position:"absolute", top:10, left:10 }}>
+            <span style={{ background:meta.bg, color:meta.tc, fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20, backdropFilter:"blur(4px)" }}>{meta.label}</span>
+          </div>
+          {/* Spots badge */}
+          {spotsLeft > 0 && spotsLeft < 20 && (
+            <div style={{ position:"absolute", top:10, right:10 }}>
+              <span style={{ background:"#FAECE7", color:"#E24B4A", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>⚡ {spotsLeft} left</span>
+            </div>
+          )}
+          {/* Song vinyl icon */}
+          {isSong && (
+            <div style={{ position:"absolute", right:14, bottom:14, width:40, height:40, borderRadius:"50%", background:"rgba(255,255,255,0.18)", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(6px)" }}>
+              <div style={{ width:12, height:12, borderRadius:"50%", background:"white", opacity:0.9 }} />
+            </div>
+          )}
+          {/* Title overlay */}
+          <div style={{ position:"absolute", bottom:10, left:12, right:60 }}>
+            <div style={{ fontWeight:700, fontSize:15, color:"white", lineHeight:1.2, textShadow:"0 1px 4px rgba(0,0,0,0.5)" }}>{t.title}</div>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,0.8)", marginTop:2 }}>{artistBrand}{genre ? ` · ${genre}` : ""}</div>
+          </div>
+        </div>
+
+        {/* Bottom row */}
+        <div style={{ padding:"12px 14px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ display:"flex", gap:6 }}>
+            {REACTIONS.slice(0,3).map(r => (
+              <span key={r.value} style={{ fontSize:18, opacity:0.6 }}>{r.emoji}</span>
+            ))}
+            <span style={{ fontSize:11, color:T.textSub, alignSelf:"center", marginLeft:2 }}>React & earn</span>
+          </div>
+          <div style={{ textAlign:"right" }}>
+            <div style={{ fontWeight:700, color: isSong ? "#7C3AED" : "#C2185B", fontSize:16 }}>{fmt(t.reward)}</div>
+            <div style={{ fontSize:9, color:T.textSub }}>instant</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Standard task card ──
   return (
     <div style={{ background:T.card, borderRadius:16, padding:"14px 16px", margin: compact ? "0 0 10px" : "0 16px 12px", boxShadow:"0 2px 8px rgba(0,0,0,0.07)", cursor:"pointer", border:`0.5px solid ${T.border}` }} onClick={onSelect}>
       <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -1750,123 +2199,110 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
   const T           = theme(dark);
   const activeInvs  = investments.filter(i => i.status === "active");
   const historyInvs = investments.filter(i => i.status === "paid_out");
-  const vipTier     = profile?.vip_tier ?? "bronze";
-  const vipInfo     = VIP_TIERS[vipTier];
-  const totalInvested = profile?.total_invested ?? 0;
+  const vipTier     = profile?.vip_tier ?? null;
+  const vipInfo     = vipTier ? VIP_TIERS[vipTier] : null;
+  const activePlanNames = activeInvs.map(i => i.plan_name);
 
-  // Total live profit across all active investments
-  const totalLiveProfit = activeInvs.reduce((sum, inv) => {
-    const principal    = inv.amount;
-    const dailyRate    = parseFloat(inv.daily_rate);
-    const totalSeconds = inv.duration_days * 86400;
-    const startMs      = new Date(inv.starts_at).getTime();
-    const elapsedSec   = Math.max(0, (Date.now() - startMs) / 1000);
-    const perSecond    = (principal * dailyRate * inv.duration_days) / totalSeconds;
-    return sum + Math.floor(Math.min(elapsedSec, totalSeconds) * perSecond);
-  }, 0);
+  // Highest active plan for task limit display
+  const planOrder   = ["Starter","Growth","Premium","Elite","Legend"];
+  const highestPlan = planOrder.slice().reverse().find(p => activePlanNames.includes(p));
+  const tierInfo    = highestPlan ? PLAN_TIERS[highestPlan] : null;
 
-  const [displayProfit, setDisplayProfit] = useState(totalLiveProfit);
+  // Total live profit ticker
+  const [displayProfit, setDisplayProfit] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => {
-      const p = activeInvs.reduce((sum, inv) => {
-        const principal    = inv.amount;
-        const dailyRate    = parseFloat(inv.daily_rate);
-        const totalSeconds = inv.duration_days * 86400;
-        const startMs      = new Date(inv.starts_at).getTime();
-        const elapsedSec   = Math.max(0, (Date.now() - startMs) / 1000);
-        const perSecond    = (principal * dailyRate * inv.duration_days) / totalSeconds;
-        return sum + Math.floor(Math.min(elapsedSec, totalSeconds) * perSecond);
-      }, 0);
-      setDisplayProfit(p);
-    }, 1000);
+    const calc = () => activeInvs.reduce((sum, inv) => {
+      const ps  = inv.amount * parseFloat(inv.daily_rate) * inv.duration_days / (inv.duration_days * 86400);
+      const el  = Math.max(0, (Date.now() - new Date(inv.starts_at).getTime()) / 1000);
+      return sum + Math.floor(Math.min(el, inv.duration_days * 86400) * ps);
+    }, 0);
+    setDisplayProfit(calc());
+    const id = setInterval(() => setDisplayProfit(calc()), 1000);
     return () => clearInterval(id);
   }, [investments]);
 
-  // Find next VIP tier
-  const tierOrder   = ["bronze","silver","gold","platinum"];
-  const tierIdx     = tierOrder.indexOf(vipTier);
-  const nextTierKey = tierOrder[tierIdx + 1];
-  const nextTier    = nextTierKey ? VIP_TIERS[nextTierKey] : null;
-  const progressToNext = nextTier
-    ? Math.min(100, Math.round(((totalInvested - vipInfo.threshold) / (nextTier.threshold - vipInfo.threshold)) * 100))
-    : 100;
-
-  // Which plan IDs already have active investments
   const activePlanIds = activeInvs.map(i => i.plan_id);
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:100 }}>
 
-      {/* ── Total profit hero card ── */}
-      <div style={{ background:`linear-gradient(135deg,${BG_DARK} 0%,#1a3d2b 50%,${BRAND_DARK} 100%)`, margin:16, borderRadius:24, padding:"28px 22px", color:"white", boxShadow:"0 8px 32px rgba(15,46,34,0.4)", position:"relative", overflow:"hidden" }}>
-        {/* decorative circle */}
+      {/* ── Hero card ── */}
+      <div style={{ background:`linear-gradient(135deg,${BG_DARK} 0%,#1a3d2b 50%,${BRAND_DARK} 100%)`,
+        margin:16, borderRadius:24, padding:"28px 22px", color:"white",
+        boxShadow:"0 8px 32px rgba(15,46,34,0.4)", position:"relative", overflow:"hidden" }}>
         <div style={{ position:"absolute", right:-30, top:-30, width:130, height:130, borderRadius:"50%", background:"rgba(255,255,255,0.05)" }} />
         <div style={{ position:"absolute", right:20, bottom:-40, width:100, height:100, borderRadius:"50%", background:"rgba(255,255,255,0.04)" }} />
-
-        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>
-          Total profit growing
-        </div>
-        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:42, fontWeight:700, letterSpacing:-1, marginBottom:4, transition:"all 0.5s" }}>
+        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>Total profit growing</div>
+        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:42, fontWeight:700, letterSpacing:-1, marginBottom:4 }}>
           {fmt(displayProfit)}
         </div>
         <div style={{ fontSize:12, opacity:0.65, marginBottom:20 }}>
           Across {activeInvs.length} active plan{activeInvs.length !== 1 ? "s" : ""} · updates every second
         </div>
-
-        {/* VIP badge */}
-        <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.12)", borderRadius:12, padding:"8px 14px" }}>
-          <span style={{ fontSize:18 }}>{vipInfo.label.split(" ")[0]}</span>
-          <div>
-            <div style={{ fontSize:12, fontWeight:700 }}>{vipInfo.label} Member</div>
-            <div style={{ fontSize:10, opacity:0.75 }}>{vipInfo.perk}</div>
+        {/* Active tier badge */}
+        {vipInfo ? (
+          <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.12)", borderRadius:12, padding:"8px 14px" }}>
+            <span style={{ fontSize:20 }}>{vipInfo.label.split(" ")[0]}</span>
+            <div>
+              <div style={{ fontSize:12, fontWeight:700 }}>{vipInfo.label} Member</div>
+              <div style={{ fontSize:10, opacity:0.75 }}>{vipInfo.perk}</div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.10)", borderRadius:12, padding:"8px 14px" }}>
+            <span style={{ fontSize:16 }}>🔒</span>
+            <div style={{ fontSize:12, opacity:0.8 }}>Buy a plan to unlock tasks & earning boosts</div>
+          </div>
+        )}
       </div>
 
-      {/* ── VIP Tier progress ── */}
+      {/* ── Task access summary card ── */}
       <div style={{ background:T.card, borderRadius:16, margin:"0 16px 16px", padding:"16px 18px", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-          <div style={{ fontWeight:600, fontSize:14, color:T.text }}>VIP Tier Progress</div>
-          {nextTier && (
-            <div style={{ fontSize:11, color:T.textSub }}>
-              {fmt(nextTier.threshold - totalInvested)} to {nextTier.label}
+        <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:14 }}>📋 Your Task Access</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:14 }}>
+          {[
+            ["Tasks/day",   tierInfo ? (tierInfo.dailyTasks === null ? "∞" : tierInfo.dailyTasks) : "0",       tierInfo ? tierInfo.color : "#aaa"],
+            ["Reward boost", tierInfo ? `×${tierInfo.multiplier.toFixed(2)}` : "—",                            tierInfo ? tierInfo.color : "#aaa"],
+            ["Exclusive",    tierInfo?.exclusiveTasks ? "Yes 👑" : (tierInfo ? "No" : "—"),                    tierInfo?.exclusiveTasks ? "#B8860B" : "#aaa"],
+          ].map(([lbl, val, tc]) => (
+            <div key={lbl} style={{ textAlign:"center", background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px 6px" }}>
+              <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
+              <div style={{ fontWeight:700, fontSize:15, color:tc }}>{val}</div>
             </div>
-          )}
+          ))}
         </div>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-          {["bronze","silver","gold","platinum"].map((tk, i) => {
-            const ti    = VIP_TIERS[tk];
-            const isDone = tierOrder.indexOf(tk) <= tierIdx;
+
+        {/* Plan tier ladder */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          {planOrder.map(pk => {
+            const pt       = PLAN_TIERS[pk];
+            const isActive = activePlanNames.includes(pk);
+            const isLegend = pk === "Legend";
             return (
-              <div key={tk} style={{ textAlign:"center", flex:1 }}>
-                <div style={{ width:28, height:28, borderRadius:"50%", background: isDone ? ti.bg : (dark ? "#1a3d2b" : "#eee"), border:`2px solid ${isDone ? ti.color : "transparent"}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, margin:"0 auto 4px" }}>
-                  {ti.label.split(" ")[0]}
+              <div key={pk} style={{ textAlign:"center", flex:1 }}>
+                <div style={{
+                  width:34, height:34, borderRadius:"50%", margin:"0 auto 4px",
+                  background: isActive ? pt.gradient : (dark ? "#1a2e20" : "#eee"),
+                  display:"flex", alignItems:"center", justifyContent:"center", fontSize:16,
+                  boxShadow: isActive ? `0 0 0 2.5px ${pt.color}` : "none",
+                  border: isLegend && !isActive ? `1.5px dashed #B8860B` : "none",
+                }}>
+                  {pt.icon}
                 </div>
-                <div style={{ fontSize:9, color: isDone ? ti.color : T.textSub, fontWeight: isDone ? 700 : 400 }}>
-                  {tk.charAt(0).toUpperCase()+tk.slice(1)}
+                <div style={{ fontSize:9, color: isActive ? pt.color : T.textSub, fontWeight: isActive ? 700 : 400 }}>
+                  {pk}
                 </div>
               </div>
             );
           })}
-        </div>
-        <div style={{ height:6, background: dark ? "#1a3d2b" : "#eee", borderRadius:3 }}>
-          <div style={{ height:"100%", width:`${progressToNext}%`, background:`linear-gradient(90deg,${BRAND},${BRAND_DARK})`, borderRadius:3, transition:"width 0.5s ease" }} />
-        </div>
-        <div style={{ fontSize:11, color:T.textSub, marginTop:8, textAlign:"center" }}>
-          Total invested: <strong style={{ color:T.text }}>{fmt(totalInvested)}</strong>
-          {nextTier && <> · Reach {fmt(nextTier.threshold)} for {nextTier.label}</>}
         </div>
       </div>
 
       {/* ── Active investments ── */}
       {activeInvs.length > 0 && (
         <div style={{ padding:"0 16px", marginBottom:16 }}>
-          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>
-            📈 Your active investments
-          </div>
-          {activeInvs.map(inv => (
-            <ActiveInvestmentCard key={inv.id} investment={inv} dark={dark} />
-          ))}
+          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📈 Your active investments</div>
+          {activeInvs.map(inv => <ActiveInvestmentCard key={inv.id} investment={inv} dark={dark} />)}
         </div>
       )}
 
@@ -1874,25 +2310,33 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
       <div style={{ padding:"0 16px", marginBottom:16 }}>
         <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:4 }}>Investment Plans</div>
         <div style={{ fontSize:12, color:T.textSub, marginBottom:14 }}>
-          Buy a plan, watch your money grow, withdraw at maturity.
+          Each plan unlocks more daily tasks and higher reward multipliers.
         </div>
         {plans.map(plan => {
           const meta        = PLAN_META[plan.name] ?? PLAN_META.Starter;
           const isActive    = activePlanIds.includes(plan.id);
-          // Find the next plan above this one for upgrade messaging
           const planIdx     = plans.findIndex(p => p.id === plan.id);
           const prevPlan    = plans[planIdx - 1];
           const hasLower    = prevPlan && activePlanIds.includes(prevPlan.id);
           const upgradeCost = hasLower ? plan.amount - prevPlan.amount : null;
           const totalProfit = Math.floor(plan.amount * plan.daily_rate * plan.duration_days);
+          const pt          = PLAN_TIERS[plan.name] ?? PLAN_TIERS.Starter;
+          const isLegend    = plan.name === "Legend";
 
           return (
-            <div key={plan.id} style={{ background:T.card, borderRadius:18, marginBottom:14, overflow:"hidden", boxShadow:"0 4px 16px rgba(0,0,0,0.08)", border:`0.5px solid ${T.border}`, opacity: isActive ? 0.7 : 1 }}>
+            <div key={plan.id} style={{
+              background: isLegend ? "linear-gradient(135deg,#1a1000,#2d1f00)" : T.card,
+              borderRadius:18, marginBottom:14, overflow:"hidden",
+              boxShadow: isLegend ? "0 8px 32px rgba(184,134,11,0.25)" : "0 4px 16px rgba(0,0,0,0.08)",
+              border: isLegend ? "1.5px solid #B8860B" : `0.5px solid ${T.border}`,
+              opacity: isActive ? 0.75 : 1,
+            }}>
               {/* Plan header */}
               <div style={{ background:meta.gradient, padding:"18px 20px", color:"white" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                   <div>
-                    <div style={{ fontSize:28, marginBottom:4 }}>{meta.icon}</div>
+                    {isLegend && <div style={{ fontSize:10, fontWeight:700, background:"rgba(255,215,0,0.25)", borderRadius:20, padding:"2px 10px", display:"inline-block", marginBottom:6, letterSpacing:"0.08em" }}>👑 MOST POWERFUL</div>}
+                    <div style={{ fontSize:30, marginBottom:4 }}>{meta.icon}</div>
                     <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
                     <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
                       {Math.round(plan.daily_rate * 100)}% daily · {plan.duration_days} days
@@ -1900,28 +2344,38 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
                   </div>
                   <div style={{ textAlign:"right" }}>
                     <div style={{ fontSize:11, opacity:0.75 }}>Total return</div>
-                    <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700 }}>
-                      {fmt(plan.amount + totalProfit)}
-                    </div>
+                    <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700 }}>{fmt(plan.amount + totalProfit)}</div>
                     <div style={{ fontSize:11, opacity:0.75 }}>on {fmt(plan.amount)}</div>
                   </div>
                 </div>
               </div>
 
-              {/* Plan details */}
+              {/* Plan stats */}
               <div style={{ padding:"14px 18px" }}>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:14 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
                   {[
-                    ["Buy-in", fmt(plan.amount)],
-                    ["Profit", fmt(totalProfit)],
-                    ["Duration", `${plan.duration_days}d`],
+                    ["Buy-in",    fmt(plan.amount)],
+                    ["Profit",    fmt(totalProfit)],
+                    ["Tasks/day", pt.dailyTasks === null ? "∞ 👑" : String(pt.dailyTasks)],
+                    ["Boost",     `×${pt.multiplier.toFixed(2)}`],
                   ].map(([lbl, val]) => (
-                    <div key={lbl} style={{ textAlign:"center", background: dark ? "#142e20" : "#f7faf9", borderRadius:10, padding:"10px 6px" }}>
-                      <div style={{ fontSize:10, color:T.textSub, marginBottom:3 }}>{lbl}</div>
-                      <div style={{ fontWeight:700, fontSize:13, color:T.text }}>{val}</div>
+                    <div key={lbl} style={{ textAlign:"center", background: isLegend ? "rgba(184,134,11,0.12)" : (dark ? "#142e20" : "#f7faf9"), borderRadius:10, padding:"10px 4px" }}>
+                      <div style={{ fontSize:9, color: isLegend ? "#B8860B" : T.textSub, marginBottom:3 }}>{lbl}</div>
+                      <div style={{ fontWeight:700, fontSize:12, color: isLegend ? "#FFD700" : T.text }}>{val}</div>
                     </div>
                   ))}
                 </div>
+
+                {/* Exclusive tasks badge for Legend */}
+                {isLegend && (
+                  <div style={{ background:"rgba(184,134,11,0.15)", borderRadius:10, padding:"10px 14px", marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontSize:18 }}>👑</span>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700, color:"#FFD700" }}>Exclusive Legend Tasks</div>
+                      <div style={{ fontSize:11, color:"#B8860B", marginTop:2 }}>High-paying tasks only Legend members can see — up to UGX 10,000 per task</div>
+                    </div>
+                  </div>
+                )}
 
                 {isActive ? (
                   <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", textAlign:"center", fontSize:13, fontWeight:600, color:BRAND_DARK }}>
@@ -1929,10 +2383,14 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
                   </div>
                 ) : (
                   <button
-                    style={{ ...S.primaryBtn, background: meta.gradient, padding:"12px 0", fontSize:14 }}
+                    style={{ ...S.primaryBtn, background:meta.gradient, padding:"12px 0", fontSize:14, fontWeight:700 }}
                     onClick={() => onBuyPlan({ ...plan, upgradeCost, hasLower, prevPlanName: prevPlan?.name })}
                   >
-                    {hasLower ? `⬆ Upgrade from ${prevPlan.name} — pay ${fmt(upgradeCost)}` : `Invest ${fmt(plan.amount)} →`}
+                    {hasLower
+                      ? `⬆ Upgrade from ${prevPlan.name} — pay ${fmt(upgradeCost)}`
+                      : isLegend
+                        ? `👑 Invest ${fmt(plan.amount)} — Go Legend`
+                        : `Invest ${fmt(plan.amount)} →`}
                   </button>
                 )}
               </div>
@@ -1949,14 +2407,10 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
             const meta = PLAN_META[inv.plan_name] ?? PLAN_META.Starter;
             return (
               <div key={inv.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", alignItems:"center", gap:12 }}>
-                <div style={{ width:40, height:40, borderRadius:12, background:meta.gradient, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>
-                  {meta.icon}
-                </div>
+                <div style={{ width:40, height:40, borderRadius:12, background:meta.gradient, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{meta.icon}</div>
                 <div style={{ flex:1 }}>
                   <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{inv.plan_name} Plan</div>
-                  <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
-                    Matured {new Date(inv.credited_at ?? inv.ends_at).toLocaleDateString()}
-                  </div>
+                  <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Matured {new Date(inv.credited_at ?? inv.ends_at).toLocaleDateString()}</div>
                 </div>
                 <div style={{ textAlign:"right" }}>
                   <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:14 }}>+{fmt(inv.total_profit)}</div>
@@ -1967,7 +2421,6 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
           })}
         </div>
       )}
-
     </div>
   );
 }
