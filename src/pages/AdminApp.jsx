@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { supabase, adminApproveWithdrawal, adminRejectWithdrawal, adminSuspendUser, adminVerifyBusiness, adminCreateTask, adminToggleTask, adminSaveSettings } from "../lib/supabase";
 
-const fmt = (n) => "UGX " + Number(n).toLocaleString();
+const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
 
 // ── Simple admin auth (Supabase email/password for admin user) ─
 function AdminLogin({ onLogin }) {
@@ -54,9 +54,12 @@ export default function AdminApp() {
   const [businesses, setBusinesses] = useState([]);
   const [settings, setSettings] = useState({});
   const [stats, setStats]       = useState({});
+  const [investments, setInvestments] = useState([]);
+  const [invPlans, setInvPlans] = useState([]);
   const [toast, setToast]       = useState(null);
   const [userSearch, setUserSearch] = useState("");
   const [taskModal, setTaskModal] = useState(false);
+  const [planModal, setPlanModal] = useState(null); // null | plan object | "new"
   const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
@@ -82,8 +85,21 @@ export default function AdminApp() {
 
   async function loadAll() {
     setLoading(true);
-    await Promise.all([loadUsers(), loadWithdrawals(), loadTasks(), loadBusinesses(), loadSettings(), loadStats()]);
+    await Promise.all([loadUsers(), loadWithdrawals(), loadTasks(), loadBusinesses(), loadSettings(), loadStats(), loadInvestments()]);
     setLoading(false);
+  }
+
+  async function loadInvestments() {
+    const { data: invData } = await supabase
+      .from("user_investments")
+      .select("*, profiles(name, phone, vip_tier), investment_plans(name, daily_rate, duration_days)")
+      .order("created_at", { ascending: false });
+    setInvestments(invData ?? []);
+    const { data: planData } = await supabase
+      .from("investment_plans")
+      .select("*")
+      .order("sort_order");
+    setInvPlans(planData ?? []);
   }
 
   async function loadUsers() {
@@ -115,16 +131,42 @@ export default function AdminApp() {
   }
 
   async function loadStats() {
-    const [{ count: totalUsers }, { count: activeToday }, paidOut, pending] = await Promise.all([
+    const [{ count: totalUsers }, { count: activeToday }, paidOut, pending, invActive] = await Promise.all([
       supabase.from("profiles").select("*", { count: "exact", head: true }),
       supabase.from("profiles").select("*", { count: "exact", head: true }).gte("last_login", new Date().toISOString().slice(0,10)),
       supabase.from("transactions").select("amount").eq("type", "withdrawal"),
       supabase.from("withdrawals").select("amount").eq("status", "pending"),
+      supabase.from("user_investments").select("amount").eq("status", "active"),
     ]);
-    const totalPaidOut = (paidOut.data ?? []).reduce((s, t) => s + Math.abs(t.amount), 0);
+    const totalPaidOut       = (paidOut.data ?? []).reduce((s, t) => s + Math.abs(t.amount), 0);
     const pendingWithdrawals = (pending.data ?? []).reduce((s, t) => s + t.amount, 0);
-    setStats({ totalUsers: totalUsers ?? 0, activeToday: activeToday ?? 0, totalPaidOut, pendingWithdrawals });
+    const totalInvested      = (invActive.data ?? []).reduce((s, t) => s + t.amount, 0);
+    setStats({ totalUsers: totalUsers ?? 0, activeToday: activeToday ?? 0, totalPaidOut, pendingWithdrawals, totalInvested });
   }
+
+  const handlePlanSave = async (planData) => {
+    try {
+      if (planData.id) {
+        await supabase.from("investment_plans").update({
+          name: planData.name, amount: parseInt(planData.amount),
+          daily_rate: parseFloat(planData.daily_rate),
+          duration_days: parseInt(planData.duration_days),
+          is_active: planData.is_active,
+        }).eq("id", planData.id);
+      } else {
+        await supabase.from("investment_plans").insert({
+          name: planData.name, amount: parseInt(planData.amount),
+          daily_rate: parseFloat(planData.daily_rate),
+          duration_days: parseInt(planData.duration_days),
+          sort_order: invPlans.length + 1,
+          is_active: true,
+        });
+      }
+      showToast("Plan saved ✓");
+      setPlanModal(null);
+      loadInvestments();
+    } catch (e) { showToast(e.message ?? "Save failed", "error"); }
+  };
 
   const handleApprove = async (id) => {
     try {
@@ -218,6 +260,7 @@ export default function AdminApp() {
             { id: "users",       icon: "👥", label: "Users" },
             { id: "withdrawals", icon: "💸", label: "Withdrawals", badge: pendingCount },
             { id: "tasks",       icon: "📋", label: "Tasks" },
+            { id: "grow",        icon: "🌱", label: "Grow / Invest" },
             { id: "businesses",  icon: "🏢", label: "Businesses", badge: unverifiedBiz },
             { id: "settings",    icon: "⚙️", label: "Settings" },
           ].map(item => (
@@ -242,7 +285,7 @@ export default function AdminApp() {
         <div style={A.topbar}>
           <div style={{ fontWeight: 700, fontSize: 20 }}>
             {{ overview: "Dashboard Overview", users: "User Management", withdrawals: "Withdrawals",
-               tasks: "Task Management", businesses: "Businesses", settings: "Settings" }[tab]}
+               tasks: "Task Management", grow: "Grow & Investment Plans", businesses: "Businesses", settings: "Settings" }[tab]}
           </div>
           <div style={{ fontSize: 13, color: "#888" }}>{new Date().toDateString()}</div>
         </div>
@@ -256,6 +299,7 @@ export default function AdminApp() {
               {tab === "users"       && <UsersTab users={filteredUsers} search={userSearch} setSearch={setUserSearch} onSuspend={handleSuspendUser} />}
               {tab === "withdrawals" && <WithdrawalsTab withdrawals={withdrawals} onApprove={handleApprove} onReject={handleReject} />}
               {tab === "tasks"       && <TasksTab tasks={tasks} onToggle={handleToggleTask} onCreate={() => setTaskModal(true)} />}
+              {tab === "grow"        && <GrowAdminTab investments={investments} plans={invPlans} onEditPlan={setPlanModal} onNewPlan={() => setPlanModal("new")} onRefresh={loadInvestments} />}
               {tab === "businesses"  && <BusinessesTab businesses={businesses} onVerify={handleVerifyBusiness} />}
               {tab === "settings"    && <SettingsTab settings={settings} onSave={handleSaveSettings} />}
             </>
@@ -266,6 +310,14 @@ export default function AdminApp() {
       {taskModal && (
         <CreateTaskModal onClose={() => setTaskModal(false)} onCreate={handleCreateTask}
           businesses={businesses.filter(b => b.verified)} />
+      )}
+
+      {planModal && (
+        <PlanModal
+          plan={planModal === "new" ? null : planModal}
+          onClose={() => setPlanModal(null)}
+          onSave={handlePlanSave}
+        />
       )}
 
       {toast && <div style={{ ...A.toast, background: toast.type === "error" ? "#E24B4A" : "#1D9E75" }}>{toast.msg}</div>}
@@ -287,12 +339,13 @@ export default function AdminApp() {
 function OverviewTab({ stats, withdrawals, tasks, onApprove }) {
   return (
     <div style={{ animation: "slideUp 0.3s ease" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 16, marginBottom: 24 }}>
         {[
-          { label: "Total Users",            value: (stats.totalUsers ?? 0).toLocaleString(), icon: "👥", color: "#E6F1FB", tc: "#185FA5", sub: `${stats.activeToday ?? 0} active today` },
-          { label: "Total Paid Out",          value: fmt(stats.totalPaidOut ?? 0),             icon: "💸", color: "#E1F5EE", tc: "#0F6E56", sub: "All time" },
-          { label: "Pending Withdrawals",     value: fmt(stats.pendingWithdrawals ?? 0),        icon: "⏳", color: "#FAEEDA", tc: "#854F0B", sub: `${withdrawals.filter(w=>w.status==="pending").length} requests` },
-          { label: "Active Tasks",            value: tasks.filter(t=>t.status==="active").length, icon: "📋", color: "#FAECE7", tc: "#993C1D", sub: `${tasks.length} total` },
+          { label: "Total Users",        value: (stats.totalUsers ?? 0).toLocaleString(), icon: "👥", color: "#E6F1FB", tc: "#185FA5", sub: `${stats.activeToday ?? 0} active today` },
+          { label: "Total Paid Out",      value: fmt(stats.totalPaidOut ?? 0),             icon: "💸", color: "#E1F5EE", tc: "#0F6E56", sub: "All time" },
+          { label: "Pending Withdrawals", value: fmt(stats.pendingWithdrawals ?? 0),        icon: "⏳", color: "#FAEEDA", tc: "#854F0B", sub: `${withdrawals.filter(w=>w.status==="pending").length} requests` },
+          { label: "Active Tasks",        value: tasks.filter(t=>t.status==="active").length, icon: "📋", color: "#FAECE7", tc: "#993C1D", sub: `${tasks.length} total` },
+          { label: "Total Invested",      value: fmt(stats.totalInvested ?? 0),             icon: "🌱", color: "#FFF8E1", tc: "#7A5000", sub: "Active plans only" },
         ].map(k => (
           <div key={k.label} style={{ background: k.color, borderRadius: 16, padding: "18px 20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
@@ -594,8 +647,20 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
     }
   };
 
-  const isTimed   = ["youtube_watch","youtube_subscribe","tiktok"].includes(form.type);
-  const isTiktok  = form.type === "tiktok";
+  const isTimed    = ["youtube_watch","youtube_subscribe","tiktok"].includes(form.type);
+  const isTiktok   = form.type === "tiktok";
+  const isLikeTask = form.type === "like_product" || form.type === "like_song";
+
+  // Parse/set description JSON for like tasks
+  const setMeta = (key, val) => {
+    let meta = {};
+    try { meta = JSON.parse(form.description || "{}"); } catch {}
+    meta[key] = val;
+    set("description", JSON.stringify(meta));
+  };
+  const getMeta = (key) => {
+    try { return JSON.parse(form.description || "{}")[key] ?? ""; } catch { return ""; }
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, overflowY: "auto", padding: "20px 0" }} onClick={onClose}>
@@ -614,6 +679,10 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
               <optgroup label="TikTok">
                 <option value="tiktok">🎵 TikTok</option>
               </optgroup>
+              <optgroup label="Like / Rate">
+                <option value="like_product">🛍 Rate Product</option>
+                <option value="like_song">🎵 Rate Song</option>
+              </optgroup>
               <optgroup label="Other">
                 <option value="social">📱 Social (general)</option>
                 <option value="survey">📋 Survey</option>
@@ -623,9 +692,17 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
             </select>
           </div>
 
+          {/* Legend-only toggle */}
+          <div style={{ display:"flex", alignItems:"center", gap:10, gridColumn:"1/-1", background:"#FFF8E1", borderRadius:10, padding:"10px 14px" }}>
+            <input type="checkbox" id="legend_only" checked={form.subtype === "legend_only"} onChange={e => set("subtype", e.target.checked ? "legend_only" : "")} style={{ width:16, height:16, cursor:"pointer" }} />
+            <label htmlFor="legend_only" style={{ fontSize:13, fontWeight:600, color:"#7A5000", cursor:"pointer" }}>
+              👑 Legend-only task — only visible to Legend plan members
+            </label>
+          </div>
+
           {isTiktok && (
             <div><label style={A.label}>TikTok action</label>
-              <select style={A.input} value={form.subtype} onChange={e => set("subtype", e.target.value)}>
+              <select style={A.input} value={form.subtype === "legend_only" ? "" : form.subtype} onChange={e => set("subtype", e.target.value)}>
                 <option value="follow">Follow account</option>
                 <option value="like">Like video</option>
                 <option value="watch">Watch video</option>
@@ -633,6 +710,18 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
               </select>
             </div>
           )}
+
+          {/* Like task extra fields */}
+          {isLikeTask && (<>
+            <div style={{ gridColumn:"1/-1" }}><label style={A.label}>Cover image URL (product photo or song cover)</label><input style={A.input} placeholder="https://your-storage.com/image.jpg" value={getMeta("cover_url")} onChange={e => setMeta("cover_url", e.target.value)} /></div>
+            <div><label style={A.label}>{form.type === "like_song" ? "Artist name" : "Brand name"}</label><input style={A.input} placeholder={form.type === "like_song" ? "e.g. Eddy Kenzo" : "e.g. Movit Uganda"} value={getMeta(form.type === "like_song" ? "artist" : "brand")} onChange={e => setMeta(form.type === "like_song" ? "artist" : "brand", e.target.value)} /></div>
+            <div><label style={A.label}>{form.type === "like_song" ? "Genre" : "Category"}</label><input style={A.input} placeholder={form.type === "like_song" ? "e.g. Afrobeats" : "e.g. Hair Care"} value={getMeta("genre") || getMeta("category")} onChange={e => setMeta(form.type === "like_song" ? "genre" : "category", e.target.value)} /></div>
+            {form.type === "like_song"
+              ? <div><label style={A.label}>Album / EP name</label><input style={A.input} placeholder="e.g. Sitya Loss EP" value={getMeta("album")} onChange={e => setMeta("album", e.target.value)} /></div>
+              : <div><label style={A.label}>Price (optional)</label><input style={A.input} placeholder="e.g. UGX 8,500" value={getMeta("price")} onChange={e => setMeta("price", e.target.value)} /></div>
+            }
+            <div style={{ gridColumn:"1/-1" }}><label style={A.label}>Tagline / description</label><input style={A.input} placeholder={form.type === "like_song" ? "e.g. Uganda's biggest hit" : "e.g. New formula, same great product"} value={getMeta("tagline")} onChange={e => setMeta("tagline", e.target.value)} /></div>
+          </>)}
 
           <div><label style={A.label}>Business</label>
             <select style={A.input} value={form.business} onChange={e => set("business", e.target.value)}>
@@ -664,6 +753,252 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
             {loading ? "Creating..." : "Create Task"}
           </button>
           <button style={{ flex: 1, padding: "12px 0", background: "transparent", border: "0.5px solid #ddd", borderRadius: 10, cursor: "pointer", fontSize: 14 }} onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Grow / Investment Admin Tab ───────────────────────────────
+const PLAN_COLORS = { Starter:"#1D9E75", Growth:"#185FA5", Premium:"#E5873A", Elite:"#7B61FF", Legend:"#B8860B" };
+const PLAN_ICONS  = { Starter:"🌱", Growth:"🌿", Premium:"🌳", Elite:"💎", Legend:"👑" };
+
+function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) {
+  const [filter, setFilter] = useState("all"); // all | active | paid_out
+  const [search, setSearch] = useState("");
+
+  const activeInvs  = investments.filter(i => i.status === "active");
+  const totalInvested = activeInvs.reduce((s, i) => s + i.amount, 0);
+  const totalProfit   = activeInvs.reduce((s, i) => s + Math.floor(i.amount * parseFloat(i.daily_rate) * i.duration_days), 0);
+
+  // Per-plan investor counts
+  const planCounts = plans.reduce((acc, p) => {
+    acc[p.name] = investments.filter(i => i.plan_name === p.name && i.status === "active").length;
+    return acc;
+  }, {});
+
+  const filtered = investments
+    .filter(i => filter === "all" || i.status === filter)
+    .filter(i => !search || i.profiles?.name?.toLowerCase().includes(search.toLowerCase()) || i.profiles?.phone?.includes(search));
+
+  // Maturing soon (within 3 days)
+  const maturingSoon = activeInvs.filter(i => {
+    const days = (new Date(i.ends_at) - new Date()) / 86400000;
+    return days >= 0 && days <= 3;
+  });
+
+  return (
+    <div style={{ animation:"slideUp 0.3s ease" }}>
+
+      {/* ── Stats row ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, marginBottom:24 }}>
+        {[
+          { label:"Active investments", value:activeInvs.length,   icon:"📈", color:"#E1F5EE", tc:"#0F6E56" },
+          { label:"Total invested",     value:fmt(totalInvested),  icon:"💰", color:"#FFF8E1", tc:"#7A5000" },
+          { label:"Expected profit",    value:fmt(totalProfit),    icon:"🎯", color:"#F3E8FF", tc:"#7C3AED" },
+          { label:"Maturing in 3 days", value:maturingSoon.length, icon:"⏰", color:"#FAEEDA", tc:"#854F0B" },
+        ].map(k => (
+          <div key={k.label} style={{ background:k.color, borderRadius:16, padding:"18px 20px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}>
+              <div style={{ fontSize:11, color:k.tc, opacity:0.8, fontWeight:500 }}>{k.label}</div>
+              <span style={{ fontSize:22 }}>{k.icon}</span>
+            </div>
+            <div style={{ fontSize:22, fontWeight:700, color:k.tc }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Plan management ── */}
+      <div style={A.card}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+          <div style={{ ...A.cardTitle }}>Investment Plans</div>
+          <button style={A.primaryBtn} onClick={onNewPlan}>+ New Plan</button>
+        </div>
+        <table style={A.table}>
+          <thead>
+            <tr style={{ borderBottom:"1px solid #f0f0f0" }}>
+              {["Plan","Buy-in","Daily Rate","Duration","Total Return","Investors","Status","Actions"].map(h => (
+                <th key={h} style={A.th}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {plans.map(p => {
+              const profit = Math.floor(p.amount * p.daily_rate * p.duration_days);
+              const color  = PLAN_COLORS[p.name] ?? "#888";
+              return (
+                <tr key={p.id} style={{ borderBottom:"0.5px solid #f5f5f5" }}>
+                  <td style={A.td}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <span style={{ fontSize:20 }}>{PLAN_ICONS[p.name] ?? "📦"}</span>
+                      <span style={{ fontWeight:600 }}>{p.name}</span>
+                    </div>
+                  </td>
+                  <td style={A.td}>{fmt(p.amount)}</td>
+                  <td style={A.td}><span style={{ fontWeight:700, color }}>{(p.daily_rate*100).toFixed(0)}%</span>/day</td>
+                  <td style={A.td}>{p.duration_days} days</td>
+                  <td style={A.td}>{fmt(p.amount + profit)}</td>
+                  <td style={A.td}>
+                    <span style={{ background:"#E1F5EE", color:"#0F6E56", borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:600 }}>
+                      {planCounts[p.name] ?? 0} active
+                    </span>
+                  </td>
+                  <td style={A.td}>
+                    <span style={{ background: p.is_active ? "#E1F5EE" : "#FAECE7", color: p.is_active ? "#0F6E56" : "#993C1D", borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:600 }}>
+                      {p.is_active ? "Active" : "Paused"}
+                    </span>
+                  </td>
+                  <td style={A.td}>
+                    <button style={A.actionBtn} onClick={() => onEditPlan(p)}>Edit</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── User investments table ── */}
+      <div style={A.card}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+          <div style={A.cardTitle}>User Investments ({filtered.length})</div>
+          <div style={{ display:"flex", gap:8 }}>
+            <input style={{ ...A.searchInput, width:200 }} placeholder="Search user..." value={search} onChange={e => setSearch(e.target.value)} />
+            {["all","active","paid_out"].map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                style={{ ...A.chip, ...(filter === f ? A.chipActive : {}) }}>
+                {f === "all" ? "All" : f === "active" ? "Active" : "Completed"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <table style={A.table}>
+          <thead>
+            <tr style={{ borderBottom:"1px solid #f0f0f0" }}>
+              {["User","Plan","Invested","Expected Profit","Started","Matures","Status"].map(h => (
+                <th key={h} style={A.th}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0
+              ? <tr><td colSpan={7} style={{ padding:30, textAlign:"center", color:"#aaa", fontSize:13 }}>No investments found</td></tr>
+              : filtered.map(inv => {
+                const profit   = Math.floor(inv.amount * parseFloat(inv.daily_rate) * inv.duration_days);
+                const daysLeft = Math.max(0, Math.ceil((new Date(inv.ends_at) - new Date()) / 86400000));
+                const isSoon   = daysLeft <= 3 && inv.status === "active";
+                const color    = PLAN_COLORS[inv.plan_name] ?? "#888";
+                return (
+                  <tr key={inv.id} style={{ borderBottom:"0.5px solid #f5f5f5", background: isSoon ? "#FFFBF0" : "white" }}>
+                    <td style={A.td}>
+                      <div style={{ fontWeight:500 }}>{inv.profiles?.name ?? "—"}</div>
+                      <div style={{ fontSize:11, color:"#888" }}>{inv.profiles?.phone}</div>
+                    </td>
+                    <td style={A.td}>
+                      <span style={{ color, fontWeight:700, fontSize:13 }}>
+                        {PLAN_ICONS[inv.plan_name]} {inv.plan_name}
+                      </span>
+                    </td>
+                    <td style={A.td}>{fmt(inv.amount)}</td>
+                    <td style={A.td} style={{ color:"#0F6E56", fontWeight:600 }}>+{fmt(profit)}</td>
+                    <td style={A.td} style={{ fontSize:12, color:"#888" }}>{new Date(inv.starts_at).toLocaleDateString()}</td>
+                    <td style={A.td}>
+                      <div style={{ fontSize:12 }}>{new Date(inv.ends_at).toLocaleDateString()}</div>
+                      {inv.status === "active" && (
+                        <div style={{ fontSize:11, color: isSoon ? "#E24B4A" : "#888", fontWeight: isSoon ? 700 : 400 }}>
+                          {isSoon ? `⚠️ ${daysLeft}d left` : `${daysLeft} days left`}
+                        </div>
+                      )}
+                    </td>
+                    <td style={A.td}>
+                      <span style={{ background: inv.status === "active" ? "#E1F5EE" : inv.status === "paid_out" ? "#E6F1FB" : "#FAEEDA", color: inv.status === "active" ? "#0F6E56" : inv.status === "paid_out" ? "#185FA5" : "#854F0B", borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:600 }}>
+                        {inv.status === "paid_out" ? "Paid out" : inv.status}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Plan Edit / Create Modal ──────────────────────────────────
+function PlanModal({ plan, onClose, onSave }) {
+  const isNew = !plan;
+  const [form, setForm] = useState({
+    id:           plan?.id ?? null,
+    name:         plan?.name ?? "",
+    amount:       plan?.amount ?? "",
+    daily_rate:   plan ? (plan.daily_rate * 100).toFixed(0) : "",
+    duration_days:plan?.duration_days ?? "",
+    is_active:    plan?.is_active ?? true,
+  });
+  const [saving, setSaving] = useState(false);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const totalProfit = form.amount && form.daily_rate && form.duration_days
+    ? Math.floor(parseInt(form.amount) * (parseFloat(form.daily_rate)/100) * parseInt(form.duration_days))
+    : 0;
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onSave({ ...form, daily_rate: (parseFloat(form.daily_rate) / 100).toFixed(4) });
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300 }} onClick={onClose}>
+      <div style={{ background:"white", borderRadius:20, padding:28, width:440, animation:"slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontWeight:700, fontSize:18, marginBottom:20 }}>{isNew ? "Create Investment Plan" : `Edit ${plan.name} Plan`}</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          <div style={{ gridColumn:"1/-1" }}>
+            <label style={A.label}>Plan name</label>
+            <input style={A.input} placeholder="e.g. Starter" value={form.name} onChange={e => set("name", e.target.value)} />
+          </div>
+          <div>
+            <label style={A.label}>Buy-in amount (UGX)</label>
+            <input style={A.input} type="number" placeholder="10000" value={form.amount} onChange={e => set("amount", e.target.value)} />
+          </div>
+          <div>
+            <label style={A.label}>Daily return rate (%)</label>
+            <input style={A.input} type="number" placeholder="3" step="0.1" value={form.daily_rate} onChange={e => set("daily_rate", e.target.value)} />
+          </div>
+          <div>
+            <label style={A.label}>Duration (days)</label>
+            <input style={A.input} type="number" placeholder="7" value={form.duration_days} onChange={e => set("duration_days", e.target.value)} />
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, paddingTop:20 }}>
+            <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => set("is_active", e.target.checked)} style={{ width:16, height:16 }} />
+            <label htmlFor="is_active" style={{ fontSize:13, fontWeight:500 }}>Plan is active (visible to users)</label>
+          </div>
+        </div>
+
+        {totalProfit > 0 && (
+          <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px 16px", marginTop:16 }}>
+            <div style={{ fontSize:12, color:"#0F6E56", marginBottom:4 }}>Preview</div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
+              <span>User invests</span><strong>{fmt(form.amount)}</strong>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginTop:4 }}>
+              <span>Profit at maturity</span><strong style={{ color:"#0F6E56" }}>+{fmt(totalProfit)}</strong>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginTop:4, borderTop:"0.5px solid #b2dfdb", paddingTop:6 }}>
+              <span>Total payout</span><strong>{fmt(parseInt(form.amount || 0) + totalProfit)}</strong>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display:"flex", gap:10, marginTop:20 }}>
+          <button style={{ ...A.primaryBtn, flex:1, padding:"12px 0", opacity: saving ? 0.7 : 1 }} onClick={handleSave} disabled={saving}>
+            {saving ? "Saving..." : isNew ? "Create Plan" : "Save Changes"}
+          </button>
+          <button style={{ flex:1, padding:"12px 0", background:"transparent", border:"0.5px solid #ddd", borderRadius:10, cursor:"pointer", fontSize:14 }} onClick={onClose}>
             Cancel
           </button>
         </div>
