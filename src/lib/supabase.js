@@ -1,15 +1,26 @@
 // src/lib/supabase.js
 import { createClient } from "@supabase/supabase-js";
 
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY  = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  throw new Error(
+    "Missing Supabase env vars. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel → Settings → Environment Variables, then redeploy."
+  );
+}
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ── Auth helpers ───────────────────────────────────────────────
 
+// Convert phone to a valid email Supabase will accept: u<digits>@earnnet.app
+function phoneToEmail(phone) {
+  return `u${phone.replace(/\D/g, "")}@earnnet.app`;
+}
+
 export async function signUpWithPhone(phone, password, name, referralCode) {
-  const email = `${phone.replace(/\D/g, "")}@earnnet.app`;
+  const email = phoneToEmail(phone);
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -20,7 +31,7 @@ export async function signUpWithPhone(phone, password, name, referralCode) {
 }
 
 export async function signInWithPhone(phone, password) {
-  const email = `${phone.replace(/\D/g, "")}@earnnet.app`;
+  const email = phoneToEmail(phone);
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;

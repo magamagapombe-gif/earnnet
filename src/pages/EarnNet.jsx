@@ -486,6 +486,9 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     setTimeout(() => setToast(null), 3500);
   };
 
+  const refreshProfileRef = useRef(refreshProfile);
+  useEffect(() => { refreshProfileRef.current = refreshProfile; }, [refreshProfile]);
+
   const loadTasks = useCallback(async () => {
     setTaskLoading(true);
     try { setTasks(await getActiveTasks(uid)); } catch {}
@@ -507,15 +510,17 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
         getUserInvestments(uid),
         getInvestmentPlans(),
       ]);
-      // Check & credit any matured investments, then refresh profile
       const matured = await matureUserInvestments(uid);
-      if (matured > 0) await refreshProfile();
+      if (matured > 0) await refreshProfileRef.current();
       setInvestments(invs);
       setInvestPlans(plans);
     } catch {}
   }, [uid]);
 
-  useEffect(() => { loadTasks(); loadWallet(); loadReferrals(); loadInvestments(); }, [loadTasks, loadWallet, loadReferrals, loadInvestments]);
+  // Only re-run when uid changes, not on every callback recreation
+  useEffect(() => {
+    loadTasks(); loadWallet(); loadReferrals(); loadInvestments();
+  }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCompleteTask = async (taskId, proofBase64) => {
     if (!profile?.activated) { setActivateModal(true); return; }
