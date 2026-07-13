@@ -319,17 +319,19 @@ export async function getUserInvestments(userId) {
 }
 
 /**
- * Buy an investment plan.
- * amountPaid = difference paid via MoMo (full amount for new plan,
- * difference only for upgrades).
+ * Buy a growth plan.
+ * amount           = however much the user chose to put in (must be
+ *                     >= the plan's min_amount).
+ * durationMonths   = 1, 3, 6 or 12 — picks which rate column applies.
  * The LivePay deposit must be confirmed BEFORE calling this —
  * call it in the same polling-success callback you use for deposits.
  */
-export async function buyInvestmentPlan(userId, planId, amountPaid) {
+export async function buyInvestmentPlan(userId, planId, amount, durationMonths) {
   const { data, error } = await supabase.rpc("buy_investment_plan", {
-    p_user_id:     userId,
-    p_plan_id:     planId,
-    p_amount_paid: amountPaid,
+    p_user_id:          userId,
+    p_plan_id:          planId,
+    p_amount:           amount,
+    p_duration_months:  durationMonths,
   });
   if (error) throw error;
   return data;
