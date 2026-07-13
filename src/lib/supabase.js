@@ -291,15 +291,19 @@ export async function adminDiscreditTask(completionId) {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  EarnNet GROW — Investment & VIP Tier Functions
+//  EarnNet GROW — Vault Plans (task-tier) Functions
 // ════════════════════════════════════════════════════════════════
+// A vault plan is a one-time, non-refundable purchase that sets the
+// user's daily task cap and per-task reward going forward. There is
+// no maturity date and no principal/interest payout — see
+// schema_vault_plans.sql for the server-side logic.
 
-// ── Investment Plans ───────────────────────────────────────────
+// ── Vault Plans ──────────────────────────────────────────────────
 
-/** Fetch all active investment plan definitions */
-export async function getInvestmentPlans() {
+/** Fetch all active vault plan tiers */
+export async function getVaultPlans() {
   const { data, error } = await supabase
-    .from("investment_plans")
+    .from("vault_plans")
     .select("*")
     .eq("is_active", true)
     .order("sort_order");
@@ -307,42 +311,28 @@ export async function getInvestmentPlans() {
   return data ?? [];
 }
 
-/** Fetch all investments for a user (active + paid_out) */
-export async function getUserInvestments(userId) {
-  const { data, error } = await supabase
-    .from("user_investments")
-    .select("*, investment_plans(name, amount, daily_rate, duration_days)")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return data ?? [];
-}
-
 /**
- * Buy a growth plan.
- * amount           = however much the user chose to put in (must be
- *                     >= the plan's min_amount).
- * durationMonths   = 1, 3, 6 or 12 — picks which rate column applies.
+ * Buy (or upgrade to) a vault plan.
  * The LivePay deposit must be confirmed BEFORE calling this —
  * call it in the same polling-success callback you use for deposits.
+ * Server-side, this debits the plan's full amount for a first
+ * purchase, or just the difference if upgrading to a pricier tier.
  */
-export async function buyInvestmentPlan(userId, planId, amount, durationMonths) {
-  const { data, error } = await supabase.rpc("buy_investment_plan", {
-    p_user_id:          userId,
-    p_plan_id:          planId,
-    p_amount:           amount,
-    p_duration_months:  durationMonths,
+export async function buyVaultPlan(userId, planId) {
+  const { data, error } = await supabase.rpc("buy_vault_plan", {
+    p_user_id: userId,
+    p_plan_id: planId,
   });
   if (error) throw error;
   return data;
 }
 
 /**
- * Request payment for an investment plan via LivePay.
+ * Request payment for a vault plan via LivePay.
  * Returns when the MoMo prompt has been sent — poll for balance
- * change using useDepositPolling, then call buyInvestmentPlan.
+ * change using useDepositPolling, then call buyVaultPlan.
  */
-export async function requestInvestmentPayment(userId, amount, method, phone) {
+export async function requestVaultPlanPayment(userId, amount, method, phone) {
   const { data: { session } } = await supabase.auth.getSession();
   const res = await fetch(
     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/livepay-payment`,
@@ -358,16 +348,4 @@ export async function requestInvestmentPayment(userId, amount, method, phone) {
   const data = await res.json();
   if (!data.success) throw new Error(data.error ?? "Payment failed");
   return data;
-}
-
-/**
- * Check & credit any matured investments for this user.
- * Safe to call on every app load — idempotent.
- */
-export async function matureUserInvestments(userId) {
-  const { data, error } = await supabase.rpc("mature_due_investments", {
-    p_user_id: userId,
-  });
-  if (error) throw error;
-  return data ?? 0; // returns count of investments matured
 }
