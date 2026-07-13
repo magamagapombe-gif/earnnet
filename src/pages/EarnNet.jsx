@@ -518,11 +518,22 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
         getUserInvestments(uid),
         getInvestmentPlans(),
       ]);
-      const matured = await matureUserInvestments(uid);
-      if (matured > 0) await refreshProfileRef.current();
       setInvestments(invs);
       setInvestPlans(plans);
-    } catch {}
+    } catch (e) {
+      console.error("loadInvestments failed:", e);
+    }
+
+    // Maturity check runs separately — must never block plans/investments from rendering
+    try {
+      const matured = await matureUserInvestments(uid);
+      if (matured > 0) {
+        await refreshProfileRef.current();
+        setInvestments(await getUserInvestments(uid));
+      }
+    } catch (e) {
+      console.error("matureUserInvestments failed:", e);
+    }
   }, [uid]);
 
   // Only re-run when uid changes, not on every callback recreation
