@@ -23,40 +23,61 @@ const BRAND      = "#1D9E75";
 const BRAND_DARK = "#0F6E56";
 const BG_DARK    = "#0F2D22";
 
-// ── VIP Tier styling — plans reference one of these by vip_tier ──
-// (up to 10 plans can now share a tier; the tier itself just drives
-// badge colour/gradient/perk copy. Task limit & multiplier live on
-// the plan row itself, not here.)
-const VIP_TIERS = {
-  silver:   { label:"🥈 Silver",   color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)", bg:"#F5F5F5", badge:"#E1F5EE", badgeText:BRAND_DARK, perk:"Entry-level plans" },
-  gold:     { label:"🥇 Gold",     color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)", bg:"#FAEEDA", badge:"#E6F1FB", badgeText:"#185FA5",  perk:"Mid-tier plans" },
-  platinum: { label:"💎 Platinum", color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)", bg:"#F0EEFF", badge:"#F0EEFF", badgeText:"#7B61FF",  perk:"High-tier plans" },
-  legend:   { label:"👑 Legend",   color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", bg:"#FFF8E1", badge:"#FFF8E1", badgeText:"#7A5000", perk:"Top-tier plans" },
-};
-const VIP_RANK = { silver:1, gold:2, platinum:3, legend:4 };
+// ── Vault Plans — fixed 11-tier ladder ────────────────────────
+// Every plan fully determines its own amount, daily task count, and
+// per-task reward. All 11 tiers currently return a flat 30%/month,
+// delivered as taskReward × dailyTasks × 30 days (fixed 30-day term).
+// NOTE: the 30% rate below is a placeholder — per-tier rates will
+// replace this flat figure once the new rate model is calculated.
+const VAULT_PLANS = [
+  { level:1,  key:"beginner",   name:"Beginner",   icon:"🌱", amount:45000,      dailyTasks:1,  taskReward:450,   ratePercent:30 },
+  { level:2,  key:"seed",       name:"Seed",       icon:"🌱", amount:180000,     dailyTasks:3,  taskReward:600,   ratePercent:30 },
+  { level:3,  key:"rising",     name:"Rising",     icon:"🌅", amount:600000,     dailyTasks:6,  taskReward:1000,  ratePercent:30 },
+  { level:4,  key:"nova",       name:"Nova",       icon:"💡", amount:1350000,    dailyTasks:11, taskReward:1227,  ratePercent:30 },
+  { level:5,  key:"mastermind", name:"Mastermind", icon:"🧠", amount:4050000,    dailyTasks:18, taskReward:2250,  ratePercent:30 },
+  { level:6,  key:"titan",      name:"Titan",      icon:"💪", amount:8775000,    dailyTasks:25, taskReward:3510,  ratePercent:30 },
+  { level:7,  key:"king",       name:"King",       icon:"👑", amount:16650000,   dailyTasks:34, taskReward:4897,  ratePercent:30 },
+  { level:8,  key:"emperor",    name:"Emperor",    icon:"🦅", amount:29700000,   dailyTasks:44, taskReward:6750,  ratePercent:30 },
+  { level:9,  key:"icon",       name:"Icon",       icon:"⭐", amount:48600000,   dailyTasks:55, taskReward:8836,  ratePercent:30 },
+  { level:10, key:"supreme",    name:"Supreme",    icon:"👑", amount:74250000,   dailyTasks:66, taskReward:11250, ratePercent:30 },
+  { level:11, key:"legendary",  name:"Legendary",  icon:"🏆", amount:110000000,  dailyTasks:75, taskReward:14667, ratePercent:30 },
+].map(p => ({ ...p, monthlyEarnings: p.taskReward * p.dailyTasks * 30, durationDays: 30 }));
 
-// Duration in months → display text
-const fmtDuration = (months) =>
-  months === 1 ? "1 month" : months === 12 ? "1 year" : `${months} months`;
+const planByLevel = (level) => VAULT_PLANS.find(p => p.level === level);
 
-// Given a user's investments, find the highest-ranked ACTIVE one.
-// Each user_investments row is a self-contained snapshot (plan_name,
-// plan_icon, vip_tier, task_limit, multiplier) taken at purchase
-// time, so no lookup into a fixed plan table is needed here.
+// Visual badge styling bucketed by level range — colour/gradient only.
+// Amount, tasks, reward, and rate all come from the plan itself, not from here.
+const TIER_BANDS = [
+  { min:9,  label:"👑 Legend",   color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", badgeText:"#7A5000" }, // Icon → Legendary
+  { min:6,  label:"💎 Platinum", color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)",          badgeText:"#7B61FF" }, // Titan → Emperor
+  { min:3,  label:"🥇 Gold",     color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)",          badgeText:"#185FA5" }, // Rising → Mastermind
+  { min:1,  label:"🥈 Silver",   color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)",          badgeText:BRAND_DARK }, // Beginner → Seed
+];
+const tierStyle = (level) => (TIER_BANDS.find(b => level >= b.min) ?? TIER_BANDS[TIER_BANDS.length - 1]);
+
+// Fixed 30-day term for every vault plan — no variable lockup anymore.
+const fmtDuration = () => "30 days";
+
+// Given a user's investments, find the highest-level ACTIVE plan.
+// Each user_investments row stores plan_level (1–11), a snapshot of
+// plan_name/plan_icon taken at purchase time.
 function getActiveTier(investments) {
   const active = (investments ?? []).filter(i => i.status === "active");
   if (active.length === 0) return null;
-  const best = active.reduce((a, b) =>
-    (VIP_RANK[b.vip_tier] ?? 0) > (VIP_RANK[a.vip_tier] ?? 0) ? b : a
-  );
+  const best = active.reduce((a, b) => (b.plan_level ?? 0) > (a.plan_level ?? 0) ? b : a);
+  const plan  = planByLevel(best.plan_level) ?? {};
+  const style = tierStyle(best.plan_level ?? 1);
   return {
-    vip_tier:   best.vip_tier,
-    dailyTasks: best.task_limit,               // null = unlimited
-    multiplier: Number(best.multiplier),
-    icon:       best.plan_icon,
-    planName:   best.plan_name,
-    exclusiveTasks: best.vip_tier === "legend",
-    ...VIP_TIERS[best.vip_tier],
+    level:       best.plan_level,
+    dailyTasks:  plan.dailyTasks,
+    taskReward:  plan.taskReward,
+    ratePercent: plan.ratePercent,
+    icon:        best.plan_icon ?? plan.icon,
+    planName:    best.plan_name ?? plan.name,
+    exclusiveTasks: best.plan_level === 11,
+    label: style.label,
+    perk: `Level ${best.plan_level} vault plan`,
+    ...style,
   };
 }
 
