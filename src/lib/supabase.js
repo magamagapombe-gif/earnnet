@@ -333,10 +333,25 @@ export async function getUserInvestments(userId) {
  * use for deposits. Pays 2-level referral commission out of the
  * plan's amount server-side.
  */
-export async function buyInvestmentPlan(userId, planLevel) {
+export async function buyInvestmentPlan(userId, planLevel, mode = "manual") {
   const { data, error } = await supabase.rpc("buy_vault_plan", {
     p_user_id:    userId,
     p_plan_level: planLevel,
+    p_mode:       mode,
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Turn auto-mode on for an already-active plan the user bought as
+ * manual (e.g. they forgot to flip the switch at purchase time).
+ * Charges the same one-time fee (level * 3000) from wallet balance.
+ */
+export async function enableAutoModeForPlan(userId, investmentId) {
+  const { data, error } = await supabase.rpc("enable_auto_mode_for_plan", {
+    p_user_id:        userId,
+    p_investment_id:  investmentId,
   });
   if (error) throw error;
   return data;

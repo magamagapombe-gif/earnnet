@@ -37,8 +37,15 @@ Deno.serve(async (req) => {
 
     // ── Create task ──────────────────────────────────────────────
     if (action === "create_task") {
+      // reward is intentionally NOT collected from the admin form —
+      // each user is paid their own active plan's task_reward at
+      // completion time (see complete_task RPC). tasks.reward is a
+      // legacy not-null column that's unused by payout logic now,
+      // so we just satisfy the constraint with 0 unless a value was
+      // explicitly passed.
       const { data, error } = await adminClient.from("tasks").insert({
         ...body.task,
+        reward: body.task.reward ?? 0,
         status: "active",
         used: 0,
         completions: 0,

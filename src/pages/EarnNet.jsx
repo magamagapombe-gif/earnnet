@@ -5,7 +5,7 @@ import {
   getActiveTasks, completeTask, getTransactions, requestWithdrawal,
   getUserWithdrawals, requestDeposit, getUserDeposits, activateAccount,
   getReferralTree, getSettings,
-  getUserInvestments, buyInvestmentPlan,
+  getUserInvestments, buyInvestmentPlan, enableAutoModeForPlan,
   requestInvestmentPayment, matureUserInvestments,
   reinvestFromBalance,
 } from "../lib/supabase";
@@ -53,23 +53,23 @@ const VAULT_PLANS = [
 
 const planByLevel = (level) => VAULT_PLANS.find(p => p.level === level);
 
-// A user may only have ONE running plan (task-mode or auto-mode) at a time.
-// While it's active they cannot buy it again or drop to a lower tier — the
-// only allowed purchase is an upgrade to a strictly higher level. Once the
-// active plan matures (status flips to "paid_out" server-side), any tier is
-// purchasable again. This is a UI-level guard for a responsive experience;
-// the same rule must also be enforced inside the buy_vault_plan RPC since a
-// client check alone can be bypassed.
+// Plans STACK: a user can hold several active plans of different tiers at
+// once, and each one independently contributes its own daily task quota,
+// its own task_reward, and its own 30-day maturity — see getTaskEarningInfo()
+// below, which already sums across every active investment. The only
+// restriction is per-tier: you can't hold two active plans of the exact
+// same level at once (e.g. buy Beginner again while a Beginner is still
+// active) — that tier must mature first. Any other tier — higher or lower —
+// can be bought at any time alongside it. This is a UI-level guard for a
+// responsive experience; the same rule must also be enforced inside the
+// buy_vault_plan RPC since a client check alone can be bypassed.
 function canPurchasePlan(investments, targetLevel) {
   const active = (investments ?? []).filter(i => i.status === "active");
-  if (active.length === 0) return { allowed: true };
-  const current = active.reduce((a, b) => (b.plan_level ?? 0) > (a.plan_level ?? 0) ? b : a);
-  if (targetLevel <= current.plan_level) {
+  const sameTier = active.find(i => i.plan_level === targetLevel);
+  if (sameTier) {
     return {
       allowed: false,
-      reason: targetLevel === current.plan_level
-        ? `You already have an active ${current.plan_name} plan — it must mature before buying this tier again.`
-        : `You have an active ${current.plan_name} plan — you can only upgrade to a higher tier until it matures.`,
+      reason: `You already have an active ${sameTier.plan_name} plan — it must mature before buying this tier again.`,
     };
   }
   return { allowed: true };
@@ -726,7 +726,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       <main style={{ flex:1, overflowY:"auto", paddingTop:4 }}>
         {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} dark={dark} />}
         {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} investments={investments} onGoGrow={() => setTab("grow")} dark={dark} />}
-        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={VAULT_PLANS} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onRefresh={loadInvestments} dark={dark} />}
+        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={VAULT_PLANS} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onRefresh={async () => { await Promise.all([loadInvestments(), refreshProfile()]); }} dark={dark} />}
         {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
         {tab === "referral" && <ReferralTab profile={profile} referrals={referrals} settings={settings} dark={dark} />}
         {tab === "profile"  && <ProfileTab  profile={profile} investments={investments} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
@@ -2367,8 +2367,8 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
         <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:14 }}>📋 Your Task Access</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
           {[
-            ["Tasks/day",   tierInfo ? tierInfo.dailyTasks : "0",                                              tierInfo ? tierInfo.color : "#aaa"],
-            ["Per task",    tierInfo ? fmt(tierInfo.taskReward) : "—",                                         tierInfo ? tierInfo.color : "#aaa"],
+            ["Tasks/day",   activeInvs.length ? String(activeInvs.reduce((s,i)=>s+(i.daily_tasks??0),0)) : "0",   tierInfo ? tierInfo.color : "#aaa"],
+            ["Auto-mode",   activeInvs.filter(i=>i.mode==="auto").length,                                          tierInfo ? tierInfo.color : "#aaa"],
             ["Exclusive",   tierInfo?.exclusiveTasks ? "Yes 👑" : (tierInfo ? "No" : "—"),                     tierInfo?.exclusiveTasks ? "#B8860B" : "#aaa"],
           ].map(([lbl, val, tc]) => (
             <div key={lbl} style={{ textAlign:"center", background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px 6px" }}>
@@ -2377,6 +2377,11 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
             </div>
           ))}
         </div>
+        {activeInvs.length > 1 && (
+          <div style={{ fontSize:11, color:T.textSub, marginTop:12, lineHeight:1.6 }}>
+            {activeInvs.map(i => `${i.plan_name}: ${fmt(i.task_reward)}/task × ${i.daily_tasks}/day${i.mode==="auto" ? " (auto)" : ""}`).join(" · ")}
+          </div>
+        )}
         <div style={{ fontSize:11, color:T.textSub, marginTop:12, lineHeight:1.5 }}>
           💡 Task earnings are locked while a plan is active — they're paid out together with your principal and profit when that plan matures.
         </div>
@@ -2386,7 +2391,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
       {activeInvs.length > 0 && (
         <div style={{ padding:"0 16px", marginBottom:16 }}>
           <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📈 Your active investments</div>
-          {activeInvs.map(inv => <ActiveInvestmentCard key={inv.id} investment={inv} dark={dark} />)}
+          {activeInvs.map(inv => <ActiveInvestmentCard key={inv.id} investment={inv} userId={profile?.id} walletBalance={profile?.balance ?? 0} onRefresh={onRefresh} dark={dark} />)}
         </div>
       )}
 
@@ -2459,7 +2464,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
                   onClick={() => gate.allowed && onBuyPlan(plan)}
                   disabled={!gate.allowed}
                 >
-                  {gate.allowed ? `Invest ${fmt(plan.amount)} →` : "Upgrade locked"}
+                  {gate.allowed ? `Invest ${fmt(plan.amount)} →` : "Plan already active"}
                 </button>
                 {!gate.allowed && (
                   <div style={{ fontSize:11, color:"#993C1D", marginTop:6, textAlign:"center" }}>{gate.reason}</div>
@@ -2506,19 +2511,36 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
 }
 
 // ── Active Investment Card (with live ticking profit) ──────────
-function ActiveInvestmentCard({ investment: inv, dark }) {
+function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefresh, dark }) {
   const T           = theme(dark);
   const vt          = tierStyle(inv.plan_level ?? 1);
   const liveProfit  = useLiveProfitCounter(inv);
   const totalProfit = inv.expected_profit;
   const pct         = totalProfit > 0 ? Math.min(100, Math.round((liveProfit / totalProfit) * 100)) : 0;
   const locked      = inv.locked_task_earnings ?? 0;
+  const isAuto      = inv.mode === "auto";
+  const autoFee     = (inv.plan_level ?? 1) * 3000;
+  const [enabling, setEnabling] = useState(false);
+  const [err, setErr]           = useState("");
 
   const endsAt   = new Date(inv.ends_at);
   const now      = new Date();
   const msLeft   = Math.max(0, endsAt - now);
   const daysLeft = Math.floor(msLeft / 86400000);
   const hrsLeft  = Math.floor((msLeft % 86400000) / 3600000);
+
+  const handleEnableAuto = async () => {
+    setErr("");
+    if (walletBalance < autoFee) return setErr(`Need ${fmt(autoFee)} in your wallet to switch this plan to auto-mode.`);
+    setEnabling(true);
+    try {
+      await enableAutoModeForPlan(userId, inv.id);
+      await onRefresh?.();
+    } catch (e) {
+      setErr(e.message ?? "Could not enable auto-mode");
+    }
+    setEnabling(false);
+  };
 
   return (
     <div style={{ background:T.card, borderRadius:18, marginBottom:12, overflow:"hidden", boxShadow:"0 4px 16px rgba(0,0,0,0.1)", border:`0.5px solid ${T.border}` }}>
@@ -2527,7 +2549,7 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
           <span style={{ fontSize:24 }}>{inv.plan_icon}</span>
           <div>
             <div style={{ fontWeight:700, fontSize:16 }}>{inv.plan_name} Plan</div>
-            <div style={{ fontSize:11, opacity:0.8 }}>{fmtDuration()} term</div>
+            <div style={{ fontSize:11, opacity:0.8 }}>{fmtDuration()} term · {isAuto ? "⚡ Auto-mode" : "👆 Manual"}</div>
           </div>
         </div>
         <div style={{ textAlign:"right" }}>
@@ -2556,6 +2578,25 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
             <div style={{ fontSize:12, color: dark ? "#FFD700" : "#7A5000" }}>
               <strong>{fmt(locked)}</strong> in task earnings locked to this plan — released at maturity
             </div>
+          </div>
+        )}
+
+        {!isAuto && (
+          <div style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+              <div style={{ fontSize:12, color:T.text }}>
+                Forgot to turn on auto-mode? Switch this plan over for a one-time <strong>{fmt(autoFee)}</strong> fee, charged from your wallet.
+              </div>
+              <button
+                onClick={handleEnableAuto}
+                disabled={enabling}
+                style={{ flexShrink:0, border:"none", borderRadius:8, padding:"8px 12px", fontSize:12, fontWeight:700,
+                  background: BRAND, color:"white", cursor: enabling ? "default" : "pointer", opacity: enabling ? 0.7 : 1 }}
+              >
+                {enabling ? "..." : "⚡ Enable"}
+              </button>
+            </div>
+            {err && <div style={{ fontSize:11, color:"#c0392b", marginTop:6 }}>{err}</div>}
           </div>
         )}
 
