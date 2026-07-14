@@ -514,7 +514,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       if (matured > 0) await refreshProfileRef.current();
       setInvestments(invs);
       setInvestPlans(plans);
-    } catch {}
+    } catch (e) { console.error("loadInvestments failed:", e); }
   }, [uid]);
 
   // Only re-run when uid changes, not on every callback recreation
