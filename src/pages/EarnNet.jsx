@@ -2349,7 +2349,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
                     <div style={{ fontSize:30, marginBottom:4 }}>{meta.icon}</div>
                     <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
                     <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                      {Math.round(plan.daily_rate * 100)}% daily · {plan.duration_days} days
+                      {(plan.daily_rate * 100).toFixed(2)}% daily · {plan.duration_days} days
                     </div>
                   </div>
                   <div style={{ textAlign:"right" }}>
@@ -2456,7 +2456,7 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
           <span style={{ fontSize:24 }}>{meta.icon}</span>
           <div>
             <div style={{ fontWeight:700, fontSize:16 }}>{inv.plan_name} Plan</div>
-            <div style={{ fontSize:11, opacity:0.8 }}>{Math.round(parseFloat(inv.daily_rate)*100)}%/day · {inv.duration_days} days</div>
+            <div style={{ fontSize:11, opacity:0.8 }}>{(parseFloat(inv.daily_rate)*100).toFixed(2)}%/day · {inv.duration_days} days</div>
           </div>
         </div>
         <div style={{ textAlign:"right" }}>
