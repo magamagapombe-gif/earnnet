@@ -2361,7 +2361,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
                     <div style={{ fontSize:30, marginBottom:4 }}>{plan.icon}</div>
                     <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
                     <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                      {plan.ratePercent}% per month · {fmtDuration()}
+                      {fmtDuration()} term
                     </div>
                   </div>
                   <div style={{ textAlign:"right" }}>
@@ -2466,7 +2466,7 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
           <span style={{ fontSize:24 }}>{inv.plan_icon}</span>
           <div>
             <div style={{ fontWeight:700, fontSize:16 }}>{inv.plan_name} Plan</div>
-            <div style={{ fontSize:11, opacity:0.8 }}>{planByLevel(inv.plan_level)?.ratePercent ?? 30}%/month · {fmtDuration()} term</div>
+            <div style={{ fontSize:11, opacity:0.8 }}>{fmtDuration()} term</div>
           </div>
         </div>
         <div style={{ textAlign:"right" }}>
@@ -2644,7 +2644,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
                 {plan.name} Plan
               </div>
               <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                {plan.ratePercent}% per month
+                {fmtDuration()} term
               </div>
             </div>
             <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
@@ -2660,7 +2660,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
               ["You pay", fmt(amountNum)],
               ["You earn", fmt(totalProfit)],
               ["Term", fmtDuration()],
-              ["Monthly rate", `${plan.ratePercent}%`],
+              ["Tasks/day", String(plan.dailyTasks)],
             ].map(([lbl, val]) => (
               <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
@@ -2783,7 +2783,7 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
 
           <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Plan</label>
           <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:14 }} value={planLevel} onChange={e => setPlanLevel(Number(e.target.value))}>
-            {plans.map(p => <option key={p.level} value={p.level}>{p.icon} {p.name} — {p.ratePercent}%/month ({fmt(p.amount)})</option>)}
+            {plans.map(p => <option key={p.level} value={p.level}>{p.icon} {p.name} — {fmt(p.amount)}</option>)}
           </select>
 
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
@@ -2791,7 +2791,7 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
               ["You reinvest", fmt(amountNum)],
               ["You earn", `+${fmt(totalProfit)}`],
               ["Term", fmtDuration()],
-              ["Monthly rate", `${selectedPlan?.ratePercent ?? 30}%`],
+              ["Tasks/day", String(selectedPlan?.dailyTasks ?? 0)],
             ].map(([lbl, val]) => (
               <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
