@@ -1,5 +1,5 @@
 // src/pages/EarnNet.jsx
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Component } from "react";
 import {
   supabase, signUpWithPhone, signInWithPhone, signOut, getProfile,
   getActiveTasks, completeTask, getTransactions, requestWithdrawal,
@@ -224,7 +224,49 @@ function theme(dark) {
   };
 }
 
-export default function EarnNet() {
+// ── Error boundary ────────────────────────────────────────────
+// There was no error boundary anywhere in this app. In React, any
+// uncaught error thrown during render/commit unmounts the ENTIRE
+// tree with nothing left on screen — that's what a "blank page"
+// almost always is. This is especially likely to surface right
+// after returning from a backgrounded tab (e.g. after opening
+// YouTube for a subscribe task): browsers heavily throttle timers
+// while backgrounded, then fire several queued ticks back-to-back
+// on return, which can expose timing/ordering bugs that don't show
+// up in normal use. This boundary won't fix an underlying bug by
+// itself, but it stops a crash from taking down the whole app, and
+// logs the real error to the console so it's actually diagnosable
+// instead of just showing white.
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    console.error("EarnNet crashed:", error, info?.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center",
+          justifyContent:"center", padding:24, fontFamily:"'DM Sans',sans-serif", textAlign:"center" }}>
+          <div style={{ fontSize:48, marginBottom:12 }}>⚠️</div>
+          <div style={{ fontWeight:700, fontSize:18, marginBottom:8 }}>Something went wrong</div>
+          <div style={{ fontSize:13, color:"#666", marginBottom:20, maxWidth:280 }}>
+            The app hit an unexpected error. Tap below to reload — your progress is saved.
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ background:"#1D9E75", color:"white", border:"none", borderRadius:10, padding:"12px 28px", fontSize:14, fontWeight:700, cursor:"pointer" }}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function EarnNetApp() {
   const [session, setSession]         = useState(null);
   const [profile, setProfile]         = useState(null);
   const [settings, setSettings]       = useState({});
@@ -259,6 +301,14 @@ export default function EarnNet() {
   if (showLanding)  return <LandingPage onGetStarted={() => setShowLanding(false)} settings={settings} dark={dark} toggleDark={toggleDark} />;
   if (!session)     return <AuthFlow settings={settings} dark={dark} toggleDark={toggleDark} />;
   return <MainApp session={session} profile={profile} settings={settings} refreshProfile={() => loadProfile(session.user.id)} dark={dark} toggleDark={toggleDark} />;
+}
+
+export default function EarnNet() {
+  return (
+    <ErrorBoundary>
+      <EarnNetApp />
+    </ErrorBoundary>
+  );
 }
 
 // ── Splash ─────────────────────────────────────────────────────
@@ -1023,6 +1073,8 @@ function useCountdown(seconds, onComplete) {
   const [running, setRunning]   = useState(false);
   const [finished, setFinished] = useState(false);
   const ref = useRef(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   const start = () => { setTimeLeft(seconds); setRunning(true); setFinished(false); };
 
@@ -1034,7 +1086,6 @@ function useCountdown(seconds, onComplete) {
           clearInterval(ref.current);
           setRunning(false);
           setFinished(true);
-          onComplete();
           return 0;
         }
         return t - 1;
@@ -1042,6 +1093,19 @@ function useCountdown(seconds, onComplete) {
     }, 1000);
     return () => clearInterval(ref.current);
   }, [running]);
+
+  // Fire the (async) completion callback from an effect, never from
+  // inside the setTimeLeft updater above — updater functions must
+  // stay pure/synchronous. This also means it only ever fires once
+  // per `start()`, even if the tab was backgrounded and the browser
+  // fires several queued interval ticks back-to-back on return.
+  const firedRef = useRef(false);
+  useEffect(() => {
+    if (!finished) { firedRef.current = false; return; }
+    if (firedRef.current) return;
+    firedRef.current = true;
+    onCompleteRef.current?.();
+  }, [finished]);
 
   const fmt = (s) => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   return { timeLeft, running, finished, start, display: fmt(timeLeft) };
@@ -1084,13 +1148,33 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
     } catch {}
   };
 
+  // YouTube's embedded player will NOT emit onStateChange (or any
+  // player-to-parent) messages until the parent sends this
+  // "listening" handshake first. The official iframe_api script does
+  // this automatically under the hood; since we talk to the iframe
+  // directly via postMessage instead of loading that script, we have
+  // to send the handshake ourselves — otherwise commands like
+  // playVideo still work (parent → player), but state events never
+  // come back (player → parent), so the timer never sees "playing"
+  // and stays stuck on "paused" forever.
+  const listenerIdRef = useRef(Math.random().toString(36).slice(2));
+  const ytListen = () => {
+    try {
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ event: "listening", id: listenerIdRef.current }),
+        "https://www.youtube.com"
+      );
+    } catch {}
+  };
+
   // Once iframe loads, send playVideo — retry at 500ms and 1500ms
   // for slow devices. The button tap (handleStart) was the required
   // user gesture so autoplay is unlocked on mobile.
   const handleIframeLoad = () => {
+    ytListen();
     ytCmd("playVideo");
-    setTimeout(() => ytCmd("playVideo"), 500);
-    setTimeout(() => ytCmd("playVideo"), 1500);
+    setTimeout(() => { ytListen(); ytCmd("playVideo"); }, 500);
+    setTimeout(() => { ytListen(); ytCmd("playVideo"); }, 1500);
   };
 
   // YouTube state events — pause timer when user pauses, resume when they play
