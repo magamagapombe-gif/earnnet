@@ -69,7 +69,7 @@ export async function getActiveTasks(userId) {
 
   const { data, error } = await supabase
     .from("tasks")
-    .select("id, title, business, type, subtype, link, duration_seconds, icon, color, text_color, reward, budget, used, limit_count, completions, time_est, description, status")
+    .select("id, title, business, type, subtype, link, duration_seconds, icon, color, text_color, reward, budget, used, limit_count, completions, time_est, description, status, min_plan_level")
     .eq("status", "active");
   if (error) throw error;
 

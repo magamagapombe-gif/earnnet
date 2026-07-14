@@ -53,6 +53,28 @@ const VAULT_PLANS = [
 
 const planByLevel = (level) => VAULT_PLANS.find(p => p.level === level);
 
+// A user may only have ONE running plan (task-mode or auto-mode) at a time.
+// While it's active they cannot buy it again or drop to a lower tier — the
+// only allowed purchase is an upgrade to a strictly higher level. Once the
+// active plan matures (status flips to "paid_out" server-side), any tier is
+// purchasable again. This is a UI-level guard for a responsive experience;
+// the same rule must also be enforced inside the buy_vault_plan RPC since a
+// client check alone can be bypassed.
+function canPurchasePlan(investments, targetLevel) {
+  const active = (investments ?? []).filter(i => i.status === "active");
+  if (active.length === 0) return { allowed: true };
+  const current = active.reduce((a, b) => (b.plan_level ?? 0) > (a.plan_level ?? 0) ? b : a);
+  if (targetLevel <= current.plan_level) {
+    return {
+      allowed: false,
+      reason: targetLevel === current.plan_level
+        ? `You already have an active ${current.plan_name} plan — it must mature before buying this tier again.`
+        : `You have an active ${current.plan_name} plan — you can only upgrade to a higher tier until it matures.`,
+    };
+  }
+  return { allowed: true };
+}
+
 // Visual badge styling bucketed by level range — colour/gradient only.
 // Amount, tasks, reward, and rate all come from the plan itself, not from here.
 const TIER_BANDS = [
@@ -1967,11 +1989,14 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
     );
   }
 
-  // Filter tasks by plan access — Legend-only tasks hidden from non-Legend
-  const isLegend = !!tierInfo?.exclusiveTasks;
+  // Filter tasks by plan access — a task's min_plan_level (if set) must be
+  // <= the user's active plan level. legend_only is kept as a shorthand for
+  // min_plan_level 16 so existing tasks created before this field existed
+  // keep working unchanged.
+  const userLevel = tierInfo?.level ?? 0;
   const accessibleTasks = tasks.filter(t => {
-    if (t.subtype === "legend_only") return isLegend;
-    return true;
+    const required = t.subtype === "legend_only" ? 16 : (t.min_plan_level ?? 1);
+    return userLevel >= required;
   });
 
   const categories = ["all", ...new Set(accessibleTasks.map(t => t.category).filter(Boolean))];
@@ -2205,34 +2230,20 @@ function StatusPill({ status }) {
 }
 
 // ── Live Profit Counter Hook ───────────────────────────────────
-// Calculates profit earned so far for a single active investment,
-// ticking up in real time based on elapsed seconds.
+// Profit earned so far for a single active investment.
+// IMPORTANT: this used to be a fake clock — it invented a number by
+// dividing expected_profit across elapsed seconds, completely
+// independent of whether the user had done any tasks. That fake
+// number was then ALSO paid out again via locked_task_earnings at
+// maturity — that was the double-profit bug. Now this just reports
+// the real, earned total: locked_task_earnings, which only grows
+// when a task is actually completed (by the user, or by automode).
+// expected_profit is kept purely as the "target if you complete
+// every task" label — see totalProfit usage below — it is not an
+// amount that gets paid on its own.
 function useLiveProfitCounter(investment) {
-  const [profit, setProfit] = useState(0);
-
-  useEffect(() => {
-    if (!investment || investment.status !== "active") {
-      setProfit(0);
-      return;
-    }
-    const startMs       = new Date(investment.starts_at).getTime();
-    const endMs         = new Date(investment.ends_at).getTime();
-    const totalSeconds  = Math.max(1, (endMs - startMs) / 1000);
-    const totalProfit   = investment.expected_profit;
-    const perSecond     = totalProfit / totalSeconds;
-
-    const tick = () => {
-      const elapsedSeconds = Math.max(0, (Date.now() - startMs) / 1000);
-      const capped         = Math.min(elapsedSeconds, totalSeconds);
-      setProfit(Math.floor(capped * perSecond));
-    };
-
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [investment?.id]);
-
-  return profit;
+  if (!investment || investment.status !== "active") return 0;
+  return investment.locked_task_earnings ?? 0;
 }
 
 // ── Grow Tab ───────────────────────────────────────────────────
@@ -2249,22 +2260,12 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
 
   const totalLocked = activeInvs.reduce((s, i) => s + (i.locked_task_earnings ?? 0), 0);
 
-  // Total live profit ticker across all active investments (principal growth only —
-  // locked task earnings are added in discrete chunks as tasks complete, shown separately)
-  const [displayProfit, setDisplayProfit] = useState(0);
-  useEffect(() => {
-    const calc = () => activeInvs.reduce((sum, inv) => {
-      const startMs = new Date(inv.starts_at).getTime();
-      const endMs   = new Date(inv.ends_at).getTime();
-      const total   = Math.max(1, (endMs - startMs) / 1000);
-      const ps      = inv.expected_profit / total;
-      const el      = Math.max(0, (Date.now() - startMs) / 1000);
-      return sum + Math.floor(Math.min(el, total) * ps);
-    }, 0);
-    setDisplayProfit(calc());
-    const id = setInterval(() => setDisplayProfit(calc()), 1000);
-    return () => clearInterval(id);
-  }, [investments]);
+  // Real profit across all active investments = sum of locked_task_earnings,
+  // i.e. money actually earned by completing tasks. This used to be a fake
+  // per-second ticker derived from expected_profit/elapsed-time, invented
+  // independently of tasks done — that number was then paid AGAIN at
+  // maturity via locked_task_earnings, which was the double-profit bug.
+  const displayProfit = totalLocked;
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:100 }}>
@@ -2275,12 +2276,12 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
         boxShadow:"0 8px 32px rgba(15,46,34,0.4)", position:"relative", overflow:"hidden" }}>
         <div style={{ position:"absolute", right:-30, top:-30, width:130, height:130, borderRadius:"50%", background:"rgba(255,255,255,0.05)" }} />
         <div style={{ position:"absolute", right:20, bottom:-40, width:100, height:100, borderRadius:"50%", background:"rgba(255,255,255,0.04)" }} />
-        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>Investment profit growing</div>
+        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>Task earnings so far</div>
         <div style={{ fontFamily:"'Sora',sans-serif", fontSize:42, fontWeight:700, letterSpacing:-1, marginBottom:4 }}>
           {fmt(displayProfit)}
         </div>
         <div style={{ fontSize:12, opacity:0.65, marginBottom:14 }}>
-          Across {activeInvs.length} active plan{activeInvs.length !== 1 ? "s" : ""} · updates every second
+          Across {activeInvs.length} active plan{activeInvs.length !== 1 ? "s" : ""} · grows as tasks complete
         </div>
         {totalLocked > 0 && (
           <div style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.10)", borderRadius:12, padding:"10px 14px", marginBottom:16 }}>
@@ -2345,6 +2346,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
         {plans.map(plan => {
           const vt    = tierStyle(plan.level);
           const isTop = plan.level === 16;
+          const gate  = canPurchasePlan(investments, plan.level);
 
           return (
             <div key={plan.key} style={{
@@ -2398,11 +2400,17 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
                 )}
 
                 <button
-                  style={{ ...S.primaryBtn, background:vt.gradient, padding:"12px 0", fontSize:14, fontWeight:700 }}
-                  onClick={() => onBuyPlan(plan)}
+                  style={{ ...S.primaryBtn, background: gate.allowed ? vt.gradient : "#c7ccd1",
+                    padding:"12px 0", fontSize:14, fontWeight:700,
+                    cursor: gate.allowed ? "pointer" : "not-allowed", opacity: gate.allowed ? 1 : 0.75 }}
+                  onClick={() => gate.allowed && onBuyPlan(plan)}
+                  disabled={!gate.allowed}
                 >
-                  Invest {fmt(plan.amount)} →
+                  {gate.allowed ? `Invest ${fmt(plan.amount)} →` : "Upgrade locked"}
                 </button>
+                {!gate.allowed && (
+                  <div style={{ fontSize:11, color:"#993C1D", marginTop:6, textAlign:"center" }}>{gate.reason}</div>
+                )}
               </div>
             </div>
           );
@@ -2479,13 +2487,13 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
         {/* Live profit counter */}
         <div style={{ textAlign:"center", marginBottom:14, background: dark ? "#142e20" : "#f0faf6", borderRadius:14, padding:"14px" }}>
           <div style={{ fontSize:10, color:T.textSub, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>
-            Investment profit earned so far
+            Task earnings so far
           </div>
           <div style={{ fontFamily:"'Sora',sans-serif", fontSize:32, fontWeight:700, color:BRAND_DARK, letterSpacing:-1 }}>
             {fmt(liveProfit)}
           </div>
           <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
-            of {fmt(totalProfit)} total · ticking up every second
+            of {fmt(totalProfit)} target · grows as tasks complete
           </div>
         </div>
 
@@ -2525,8 +2533,17 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   // Amount and term are fixed per plan — nothing for the user to pick here.
   const amountNum     = plan.amount;
   const duration      = plan.durationDays;
+  // Auto-mode: pay a one-time fee (escalates 3,000/level) to have the
+  // plan's daily tasks completed automatically instead of tapping through
+  // them yourself. A plan is either auto or manual — never both — but the
+  // yield (target profit) is identical either way, since either way profit
+  // only comes from completed tasks; auto-mode just completes them for you.
+  const [autoMode, setAutoMode]  = useState(false);
+  const autoModeFee   = plan.level * 3000;
+  const totalCharge    = amountNum + (autoMode ? autoModeFee : 0);
+
   const walletBalance = profile?.balance ?? 0;
-  const walletEnough  = walletBalance >= amountNum;
+  const walletEnough  = walletBalance >= totalCharge;
   const [phone, setPhone]     = useState(profile?.phone ?? "");
   const [method, setMethod]   = useState(detectMethod(profile?.phone));
   const [payWith, setPayWith] = useState(walletEnough ? "wallet" : "mobile"); // wallet | mobile
@@ -2542,7 +2559,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
     // Payment confirmed — now activate the plan in DB
     try {
-      await buyInvestmentPlan(userId, plan.level);
+      await buyInvestmentPlan(userId, plan.level, autoMode ? "auto" : "manual");
       setStep("success");
       await onSuccess();
     } catch (e) {
@@ -2557,10 +2574,10 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
     // Paying from existing wallet balance — no mobile money prompt needed,
     // the same way a reinvestment skips a fresh payment.
     if (payWith === "wallet") {
-      if (!walletEnough) return setErr("Your wallet balance is too low for this plan");
+      if (!walletEnough) return setErr("Your wallet balance is too low for this plan" + (autoMode ? " + auto-mode fee" : ""));
       setLoading(true);
       try {
-        await buyInvestmentPlan(userId, plan.level);
+        await buyInvestmentPlan(userId, plan.level, autoMode ? "auto" : "manual");
         setStep("success");
         await onSuccess();
       } catch (e) {
@@ -2573,7 +2590,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
     if (!phone) return setErr("Enter your mobile money number");
     setLoading(true);
     try {
-      await requestInvestmentPayment(userId, amountNum, method, phone);
+      await requestInvestmentPayment(userId, totalCharge, method, phone);
       startPolling(profile?.balance ?? 0);
       setStep("waiting");
     } catch (e) {
@@ -2655,10 +2672,10 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
           {/* Summary cards — amount and term are fixed for this plan */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
             {[
-              ["You pay", fmt(amountNum)],
-              ["You earn", fmt(totalProfit)],
+              ["You pay", fmt(totalCharge)],
+              ["Target profit", fmt(totalProfit)],
               ["Term", fmtDuration()],
               ["Tasks/day", String(plan.dailyTasks)],
             ].map(([lbl, val]) => (
@@ -2668,6 +2685,32 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
               </div>
             ))}
           </div>
+
+          {/* Auto-mode toggle — pay a one-time fee so the plan's tasks complete
+              automatically instead of you tapping through them. Same target
+              yield either way; only who triggers each task differs. */}
+          <button
+            type="button"
+            onClick={() => setAutoMode(a => !a)}
+            style={{
+              width:"100%", textAlign:"left", padding:"12px 14px", borderRadius:12, marginBottom:16, cursor:"pointer",
+              border: autoMode ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
+              background: autoMode ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+              display:"flex", justifyContent:"space-between", alignItems:"center",
+            }}
+          >
+            <div>
+              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>⚡ Auto-mode {autoMode ? "(on)" : "(off)"}</div>
+              <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
+                {autoMode
+                  ? `Tasks complete automatically. One-time fee: ${fmt(autoModeFee)}.`
+                  : `Do tasks yourself for free, or pay ${fmt(autoModeFee)} once to automate them.`}
+              </div>
+            </div>
+            <div style={{ width:44, height:24, borderRadius:20, background: autoMode ? BRAND : (dark ? "#2a5040" : "#ddd"), position:"relative", flexShrink:0 }}>
+              <div style={{ width:18, height:18, borderRadius:"50%", background:"white", position:"absolute", top:3, left: autoMode ? 23 : 3, transition:"left 0.15s ease" }} />
+            </div>
+          </button>
 
           <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Pay with</label>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
@@ -2713,12 +2756,14 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient, opacity: (payWith === "wallet" && !walletEnough) ? 0.6 : 1 }} onClick={handleSubmit} disabled={loading || (payWith === "wallet" && !walletEnough)}>
             {loading
               ? (payWith === "wallet" ? "Activating..." : "Sending prompt...")
-              : (payWith === "wallet" ? `Pay ${fmt(amountNum)} from wallet & activate →` : `Pay ${fmt(amountNum)} & activate →`)}
+              : (payWith === "wallet" ? `Pay ${fmt(totalCharge)} from wallet & activate →` : `Pay ${fmt(totalCharge)} & activate →`)}
           </button>
           <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:10, lineHeight:1.6 }}>
-            {payWith === "wallet"
-              ? `${fmt(amountNum)} will be deducted from your wallet balance and locked for ${fmtDuration()}. Principal + ${fmt(totalProfit)} profit, plus any task earnings made while this plan is active, are paid out together at maturity.`
-              : `Your ${fmt(amountNum)} is locked for ${fmtDuration()}. Principal + ${fmt(totalProfit)} profit, plus any task earnings made while this plan is active, are paid out together at maturity.`}
+            {fmt(amountNum)} is locked as principal for {fmtDuration()}{autoMode ? ` (plus a ${fmt(autoModeFee)} one-time auto-mode fee, charged once)` : ""}.{" "}
+            {autoMode
+              ? `Your daily tasks complete automatically up to ${fmt(totalProfit)} target profit.`
+              : `Complete your daily tasks yourself to earn up to ${fmt(totalProfit)} target profit.`}{" "}
+            Principal plus whatever you actually earned from tasks is paid out at maturity.
           </p>
         </div>
       </div>
