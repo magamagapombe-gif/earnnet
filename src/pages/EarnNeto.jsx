@@ -7,7 +7,7 @@ import {
   getReferralTree, getSettings,
   getUserInvestments, buyInvestmentPlan,
   requestInvestmentPayment, matureUserInvestments,
-  reinvestFromBalance, extendInvestment,
+  reinvestFromBalance,
 } from "../lib/supabase";
 
 const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
@@ -23,59 +23,61 @@ const BRAND      = "#1D9E75";
 const BRAND_DARK = "#0F6E56";
 const BG_DARK    = "#0F2D22";
 
-// ── VIP Tier styling — cosmetic only (colour/gradient/badge). Which
-// tier a plan belongs to is derived from its level via tierForLevel(). ──
-const VIP_TIERS = {
-  silver:   { label:"🥈 Silver",   color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)", bg:"#F5F5F5", badge:"#E1F5EE", badgeText:BRAND_DARK, perk:"Entry-level plans" },
-  gold:     { label:"🥇 Gold",     color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)", bg:"#FAEEDA", badge:"#E6F1FB", badgeText:"#185FA5",  perk:"Mid-tier plans" },
-  platinum: { label:"💎 Platinum", color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)", bg:"#F0EEFF", badge:"#F0EEFF", badgeText:"#7B61FF",  perk:"High-tier plans" },
-  legend:   { label:"👑 Legend",   color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", bg:"#FFF8E1", badge:"#FFF8E1", badgeText:"#7A5000", perk:"Top-tier plans" },
-};
-const tierForLevel = (level) => level <= 2 ? "silver" : level <= 4 ? "gold" : level <= 7 ? "platinum" : "legend";
-
-// ── VAULT PLANS — fixed tiers ported from vaultpro-app ──────────
-// Every plan is a flat 30-day, 30%-return cycle. The amount, daily
-// task count, per-task reward and monthly earnings are all fixed
-// per plan — no variable invest amount or lockup period anymore.
+// ── Vault Plans — fixed 11-tier ladder ────────────────────────
+// Every plan fully determines its own amount, daily task count, and
+// per-task reward. All 11 tiers currently return a flat 30%/month,
+// delivered as taskReward × dailyTasks × 30 days (fixed 30-day term).
+// NOTE: the 30% rate below is a placeholder — per-tier rates will
+// replace this flat figure once the new rate model is calculated.
 const VAULT_PLANS = [
-  { key:"beginner",  name:"Beginner",  icon:"🌱", level:1,  amount:45000,      dailyTasks:1,  taskReward:450,    monthlyEarnings:13500 },
-  { key:"seed",      name:"Seed",      icon:"🌱", level:2,  amount:180000,     dailyTasks:3,  taskReward:600,    monthlyEarnings:54000 },
-  { key:"rising",    name:"Rising",    icon:"🌅", level:3,  amount:600000,     dailyTasks:6,  taskReward:1000,   monthlyEarnings:180000 },
-  { key:"nova",      name:"Nova",      icon:"💡", level:4,  amount:1350000,    dailyTasks:11, taskReward:1227,   monthlyEarnings:405000 },
-  { key:"mastermind",name:"Mastermind",icon:"🧠", level:5,  amount:4050000,    dailyTasks:18, taskReward:2250,   monthlyEarnings:1215000 },
-  { key:"titan",     name:"Titan",     icon:"💪", level:6,  amount:8775000,    dailyTasks:25, taskReward:3510,   monthlyEarnings:2632500 },
-  { key:"king",      name:"King",      icon:"👑", level:7,  amount:16650000,   dailyTasks:34, taskReward:4897,   monthlyEarnings:4995000 },
-  { key:"emperor",   name:"Emperor",   icon:"🦅", level:8,  amount:29700000,   dailyTasks:44, taskReward:6750,   monthlyEarnings:8910000 },
-  { key:"icon",      name:"Icon",      icon:"⭐", level:9,  amount:48600000,   dailyTasks:55, taskReward:8836,   monthlyEarnings:14580000 },
-  { key:"supreme",   name:"Supreme",   icon:"👑", level:10, amount:74250000,   dailyTasks:66, taskReward:11250,  monthlyEarnings:22275000 },
-  { key:"legendary", name:"Legendary", icon:"🏆", level:11, amount:110000000,  dailyTasks:75, taskReward:14667,  monthlyEarnings:33000000 },
-].map(p => ({ ...p, vip_tier: tierForLevel(p.level), days:30 }));
+  { level:1,  key:"beginner",   name:"Beginner",   icon:"🌱", amount:45000,      dailyTasks:1,  taskReward:450,   ratePercent:30 },
+  { level:2,  key:"seed",       name:"Seed",       icon:"🌱", amount:180000,     dailyTasks:3,  taskReward:600,   ratePercent:30 },
+  { level:3,  key:"rising",     name:"Rising",     icon:"🌅", amount:600000,     dailyTasks:6,  taskReward:1000,  ratePercent:30 },
+  { level:4,  key:"nova",       name:"Nova",       icon:"💡", amount:1350000,    dailyTasks:11, taskReward:1227,  ratePercent:30 },
+  { level:5,  key:"mastermind", name:"Mastermind", icon:"🧠", amount:4050000,    dailyTasks:18, taskReward:2250,  ratePercent:30 },
+  { level:6,  key:"titan",      name:"Titan",      icon:"💪", amount:8775000,    dailyTasks:25, taskReward:3510,  ratePercent:30 },
+  { level:7,  key:"king",       name:"King",       icon:"👑", amount:16650000,   dailyTasks:34, taskReward:4897,  ratePercent:30 },
+  { level:8,  key:"emperor",    name:"Emperor",    icon:"🦅", amount:29700000,   dailyTasks:44, taskReward:6750,  ratePercent:30 },
+  { level:9,  key:"icon",       name:"Icon",       icon:"⭐", amount:48600000,   dailyTasks:55, taskReward:8836,  ratePercent:30 },
+  { level:10, key:"supreme",    name:"Supreme",    icon:"👑", amount:74250000,   dailyTasks:66, taskReward:11250, ratePercent:30 },
+  { level:11, key:"legendary",  name:"Legendary",  icon:"🏆", amount:110000000,  dailyTasks:75, taskReward:14667, ratePercent:30 },
+].map(p => ({ ...p, monthlyEarnings: p.taskReward * p.dailyTasks * 30, durationDays: 30 }));
 
-const PLAN_TERM_LABEL = "30 days";
+const planByLevel = (level) => VAULT_PLANS.find(p => p.level === level);
 
-// Given a user's investments, find the highest-level ACTIVE one.
-// Each user_investments row is a self-contained snapshot (plan_key,
-// plan_name, plan_icon, level, daily_tasks, task_reward, monthly_earnings,
-// amount) taken at purchase time, so no lookup into VAULT_PLANS is
-// needed here — but we fall back to it if a row is missing a field.
+// Visual badge styling bucketed by level range — colour/gradient only.
+// Amount, tasks, reward, and rate all come from the plan itself, not from here.
+const TIER_BANDS = [
+  { min:9,  label:"👑 Legend",   color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", badgeText:"#7A5000" }, // Icon → Legendary
+  { min:6,  label:"💎 Platinum", color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)",          badgeText:"#7B61FF" }, // Titan → Emperor
+  { min:3,  label:"🥇 Gold",     color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)",          badgeText:"#185FA5" }, // Rising → Mastermind
+  { min:1,  label:"🥈 Silver",   color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)",          badgeText:BRAND_DARK }, // Beginner → Seed
+];
+const tierStyle = (level) => (TIER_BANDS.find(b => level >= b.min) ?? TIER_BANDS[TIER_BANDS.length - 1]);
+
+// Fixed 30-day term for every vault plan — no variable lockup anymore.
+const fmtDuration = () => "30 days";
+
+// Given a user's investments, find the highest-level ACTIVE plan.
+// Each user_investments row stores plan_level (1–11), a snapshot of
+// plan_name/plan_icon taken at purchase time.
 function getActiveTier(investments) {
   const active = (investments ?? []).filter(i => i.status === "active");
   if (active.length === 0) return null;
-  const best = active.reduce((a, b) => (b.level ?? 0) > (a.level ?? 0) ? b : a);
-  const fallback = VAULT_PLANS.find(p => p.key === best.plan_key) ?? {};
-  const level    = best.level ?? fallback.level ?? 1;
+  const best = active.reduce((a, b) => (b.plan_level ?? 0) > (a.plan_level ?? 0) ? b : a);
+  const plan  = planByLevel(best.plan_level) ?? {};
+  const style = tierStyle(best.plan_level ?? 1);
   return {
-    vip_tier:        tierForLevel(level),
-    level,
-    dailyTasks:       best.daily_tasks ?? fallback.dailyTasks,
-    taskReward:       Number(best.task_reward ?? fallback.taskReward ?? 0),
-    monthlyEarnings:  Number(best.monthly_earnings ?? fallback.monthlyEarnings ?? 0),
-    amount:           Number(best.amount ?? fallback.amount ?? 0),
-    icon:             best.plan_icon ?? fallback.icon,
-    planName:         best.plan_name ?? fallback.name,
-    planKey:          best.plan_key ?? fallback.key,
-    exclusiveTasks:   level >= 11,
-    ...VIP_TIERS[tierForLevel(level)],
+    level:       best.plan_level,
+    dailyTasks:  plan.dailyTasks,
+    taskReward:  plan.taskReward,
+    ratePercent: plan.ratePercent,
+    icon:        best.plan_icon ?? plan.icon,
+    planName:    best.plan_name ?? plan.name,
+    exclusiveTasks: best.plan_level === 11,
+    label: style.label,
+    perk: `Level ${best.plan_level} vault plan`,
+    ...style,
   };
 }
 
@@ -492,7 +494,6 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [deposits, setDeposits]           = useState([]);
   const [referrals, setReferrals]         = useState([]);
   const [investments, setInvestments]     = useState([]);
-  const [investPlans, setInvestPlans]     = useState(VAULT_PLANS);
   const [toast, setToast]                 = useState(null);
   const [taskLoading, setTaskLoading]     = useState(false);
   const [withdrawModal, setWithdrawModal] = useState(false);
@@ -500,7 +501,6 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [activateModal, setActivateModal] = useState(false);
   const [investModal, setInvestModal]     = useState(null); // plan object or null
   const [reinvestModal, setReinvestModal] = useState(null); // matured investment or null
-  const [extendModal, setExtendModal]     = useState(null); // active investment or null
   const [selectedTask, setSelectedTask]   = useState(null);
   const [notifOpen, setNotifOpen]         = useState(false);
   const uid = session.user.id;
@@ -544,7 +544,6 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       const matured = await matureUserInvestments(uid);
       if (matured > 0) await refreshProfileRef.current();
       setInvestments(invs);
-      setInvestPlans(VAULT_PLANS); // fixed 11-tier vault plan list, no DB fetch needed
     } catch {}
   }, [uid]);
 
@@ -669,7 +668,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       <main style={{ flex:1, overflowY:"auto", paddingTop:4 }}>
         {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} dark={dark} />}
         {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} investments={investments} onGoGrow={() => setTab("grow")} dark={dark} />}
-        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={investPlans} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onExtend={setExtendModal} onRefresh={loadInvestments} dark={dark} />}
+        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={VAULT_PLANS} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onRefresh={loadInvestments} dark={dark} />}
         {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
         {tab === "referral" && <ReferralTab profile={profile} referrals={referrals} settings={settings} dark={dark} />}
         {tab === "profile"  && <ProfileTab  profile={profile} investments={investments} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
@@ -689,8 +688,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       {depositModal  && <DepositModal  settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} onClose={() => setDepositModal(false)}  onSubmit={handleDeposit} refreshProfile={refreshProfile} dark={dark} />}
       {activateModal && <ActivateModal settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} profile={profile} onClose={() => setActivateModal(false)} onSubmit={handleActivate} refreshProfile={refreshProfile} dark={dark} />}
       {investModal   && <InvestModal   plan={investModal} profile={profile} userId={uid} investments={investments} onClose={() => setInvestModal(null)} onSuccess={async () => { setInvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Investment activated! Watch your profits grow 🌱"); }} dark={dark} />}
-      {reinvestModal && <ReinvestModal plan={reinvestModal} profile={profile} userId={uid} plans={investPlans} onClose={() => setReinvestModal(null)} onSuccess={async () => { setReinvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Reinvested! Your new plan is growing 🌱"); }} dark={dark} />}
-      {extendModal   && <ExtendModal   investment={extendModal} userId={uid} onClose={() => setExtendModal(null)} onSuccess={async () => { setExtendModal(null); await loadInvestments(); showToast("Lockup extended ✓"); }} dark={dark} />}
+      {reinvestModal && <ReinvestModal plan={reinvestModal} profile={profile} userId={uid} plans={VAULT_PLANS} onClose={() => setReinvestModal(null)} onSuccess={async () => { setReinvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Reinvested! Your new plan is growing 🌱"); }} dark={dark} />}
       {toast && <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background: toast.type === "error" ? "#E24B4A" : BRAND, color:"white", padding:"12px 24px", borderRadius:14, fontSize:13, fontWeight:500, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.25)", animation:"slideUp 0.3s ease", whiteSpace:"nowrap" }}>{toast.msg}</div>}
 
       {/* Close notif on outside click */}
@@ -1879,7 +1877,7 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
           <div>
             <div style={{ fontWeight:700, fontSize:14, color:"white" }}>🌱 EarnNet Grow</div>
             <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", marginTop:3 }}>
-              {tierInfo ? `${tierInfo.label} member` : "Invest & earn 30% monthly return"}
+              {tierInfo ? `${tierInfo.label} member` : "Invest & earn up to 10% return"}
             </div>
           </div>
           <div style={{ background:BRAND, color:"white", borderRadius:10, padding:"7px 14px", fontSize:12, fontWeight:600 }}>Invest →</div>
@@ -1920,10 +1918,7 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
           <span style={{ fontWeight:600, fontSize:15, color:T.text }}>Available tasks</span>
           <button style={{ background:"none", border:"none", color:BRAND, fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onGoTasks}>See all →</button>
         </div>
-        {tasks.slice(0, 3).map(t => {
-          const et = tierInfo ? { ...t, reward: tierInfo.taskReward } : t;
-          return <TaskCard key={et.id} task={et} onSelect={() => onSelectTask(et)} compact dark={dark} />;
-        })}
+        {tasks.slice(0, 3).map(t => <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} compact dark={dark} />)}
         {tasks.length === 0 && <div style={{ color:T.textSub, fontSize:13, textAlign:"center", padding:24 }}>All tasks done! Check back soon 🎉</div>}
       </div>
     </div>
@@ -1950,7 +1945,7 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
           Buy an investment plan to unlock daily tasks and start earning. Higher plans = more tasks per day and bigger rewards.
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:24, textAlign:"left" }}>
-          {[["🥈 Silver plans","More tasks/day · bigger reward"],["🥇 Gold plans","Even more tasks · bigger reward"],["💎 Platinum plans","High daily limit · strong reward"],["👑 Legend plans","Max tasks · top reward"]].map(([name,desc]) => (
+          {[["🥈 Silver plans","More tasks/day · reward boost"],["🥇 Gold plans","Even more tasks · bigger boost"],["💎 Platinum plans","High daily limit · strong boost"],["👑 Legend plans","Unlimited tasks · top boost"]].map(([name,desc]) => (
             <div key={name} style={{ background:T.card, borderRadius:12, padding:"12px 14px", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
               <div style={{ fontWeight:700, fontSize:13, color:T.text, marginBottom:4 }}>{name}</div>
               <div style={{ fontSize:11, color:T.textSub }}>{desc}</div>
@@ -1964,12 +1959,12 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
     );
   }
 
-  // Filter tasks by plan access — top-tier-only tasks hidden below level 11
-  const isLegend = tierInfo?.exclusiveTasks;
-  const accessibleTasks = tasks
-    .filter(t => (t.subtype === "legend_only" ? isLegend : true))
-    // Every task pays the active plan's fixed taskReward, not its own base reward
-    .map(t => (tierInfo ? { ...t, reward: tierInfo.taskReward } : t));
+  // Filter tasks by plan access — Legend-only tasks hidden from non-Legend
+  const isLegend = !!tierInfo?.exclusiveTasks;
+  const accessibleTasks = tasks.filter(t => {
+    if (t.subtype === "legend_only") return isLegend;
+    return true;
+  });
 
   const categories = ["all", ...new Set(accessibleTasks.map(t => t.category).filter(Boolean))];
   const filtered   = filter === "all" ? accessibleTasks : accessibleTasks.filter(t => t.category === filter);
@@ -1980,7 +1975,7 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
       {tierInfo && (
         <div style={{ margin:"12px 16px 0", background: dark ? "#142e20" : "#E1F5EE", borderRadius:12, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div style={{ fontSize:12, color:BRAND_DARK }}>
-            <strong>{tierInfo.dailyTasks} tasks</strong>/day · <strong>{fmt(tierInfo.taskReward)}</strong>/task
+            <strong>{tierInfo.dailyTasks === null ? "Unlimited" : `${tierInfo.dailyTasks} tasks`}</strong>/day · <strong>×{tierInfo.multiplier.toFixed(2)}</strong> reward boost
           </div>
           <span style={{ background:BRAND, color:"white", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>
             {tierInfo.planName} {tierInfo.icon}
@@ -2238,10 +2233,11 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
   const activeInvs  = investments.filter(i => i.status === "active");
   const historyInvs = investments.filter(i => i.status === "paid_out");
 
-  // Highest active tier, derived from the investments themselves —
-  // no dependency on a fixed 5-name plan list.
+  // Highest active tier, derived from the investments themselves.
+  // getActiveTier already returns everything needed for display
+  // (label, perk, gradient, dailyTasks, taskReward, ratePercent, icon).
   const tierInfo = getActiveTier(investments);
-  const vipInfo  = tierInfo ? VIP_TIERS[tierInfo.vip_tier] : null;
+  const vipInfo  = tierInfo;
 
   const totalLocked = activeInvs.reduce((s, i) => s + (i.locked_task_earnings ?? 0), 0);
 
@@ -2309,9 +2305,9 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
         <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:14 }}>📋 Your Task Access</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
           {[
-            ["Tasks/day",    tierInfo ? tierInfo.dailyTasks : "0",                     tierInfo ? tierInfo.color : "#aaa"],
-            ["Reward/task",  tierInfo ? fmt(tierInfo.taskReward) : "—",                tierInfo ? tierInfo.color : "#aaa"],
-            ["Monthly",      tierInfo ? fmt(tierInfo.monthlyEarnings) : "—",           tierInfo ? tierInfo.color : "#aaa"],
+            ["Tasks/day",   tierInfo ? tierInfo.dailyTasks : "0",                                              tierInfo ? tierInfo.color : "#aaa"],
+            ["Per task",    tierInfo ? fmt(tierInfo.taskReward) : "—",                                         tierInfo ? tierInfo.color : "#aaa"],
+            ["Exclusive",   tierInfo?.exclusiveTasks ? "Yes 👑" : (tierInfo ? "No" : "—"),                     tierInfo?.exclusiveTasks ? "#B8860B" : "#aaa"],
           ].map(([lbl, val, tc]) => (
             <div key={lbl} style={{ textAlign:"center", background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px 6px" }}>
               <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
@@ -2332,14 +2328,14 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
         </div>
       )}
 
-      {/* ── Vault plans — fixed amount, fixed 30-day term, fixed task reward ── */}
+      {/* ── Vault ladder — 11 fixed tiers, each a fixed amount and a fixed 30-day term ── */}
       <div style={{ padding:"0 16px", marginBottom:16 }}>
         <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:4 }}>Growth Plans</div>
         <div style={{ fontSize:12, color:T.textSub, marginBottom:14 }}>
-          Every plan runs for a fixed {PLAN_TERM_LABEL} and pays a flat 30% return. Higher plans unlock more daily tasks at a bigger reward each.
+          Each plan has a fixed amount, a fixed 30-day term, and its own daily task count and reward.
         </div>
         {plans.map(plan => {
-          const vt    = VIP_TIERS[plan.vip_tier] ?? VIP_TIERS.silver;
+          const vt    = tierStyle(plan.level);
           const isTop = plan.level === 11;
 
           return (
@@ -2357,7 +2353,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
                     <div style={{ fontSize:30, marginBottom:4 }}>{plan.icon}</div>
                     <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
                     <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                      30% return · {PLAN_TERM_LABEL}
+                      {plan.ratePercent}% per month · {fmtDuration()}
                     </div>
                   </div>
                   <div style={{ textAlign:"right" }}>
@@ -2371,10 +2367,10 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
               <div style={{ padding:"14px 18px" }}>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
                   {[
-                    ["Amount",      fmt(plan.amount)],
-                    ["Monthly",     fmt(plan.monthlyEarnings)],
-                    ["Tasks/day",   String(plan.dailyTasks)],
-                    ["Reward/task", fmt(plan.taskReward)],
+                    ["Amount",       fmt(plan.amount)],
+                    ["Profit/30d",   fmt(plan.monthlyEarnings)],
+                    ["Tasks/day",    String(plan.dailyTasks)],
+                    ["Per task",     fmt(plan.taskReward)],
                   ].map(([lbl, val]) => (
                     <div key={lbl} style={{ textAlign:"center", background: isTop ? "rgba(184,134,11,0.12)" : (dark ? "#142e20" : "#f7faf9"), borderRadius:10, padding:"10px 4px" }}>
                       <div style={{ fontSize:9, color: isTop ? "#B8860B" : T.textSub, marginBottom:3 }}>{lbl}</div>
@@ -2387,8 +2383,8 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
                   <div style={{ background:"rgba(184,134,11,0.15)", borderRadius:10, padding:"10px 14px", marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
                     <span style={{ fontSize:18 }}>👑</span>
                     <div>
-                      <div style={{ fontSize:12, fontWeight:700, color:"#FFD700" }}>Exclusive Legendary Tasks</div>
-                      <div style={{ fontSize:11, color:"#B8860B", marginTop:2 }}>High-paying tasks only this tier can see</div>
+                      <div style={{ fontSize:12, fontWeight:700, color:"#FFD700" }}>Exclusive Legend Tasks</div>
+                      <div style={{ fontSize:11, color:"#B8860B", marginTop:2 }}>High-paying tasks only top-tier members can see</div>
                     </div>
                   </div>
                 )}
@@ -2397,7 +2393,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
                   style={{ ...S.primaryBtn, background:vt.gradient, padding:"12px 0", fontSize:14, fontWeight:700 }}
                   onClick={() => onBuyPlan(plan)}
                 >
-                  Activate for {fmt(plan.amount)} →
+                  Invest {fmt(plan.amount)} →
                 </button>
               </div>
             </div>
@@ -2410,7 +2406,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
         <div style={{ padding:"0 16px", marginBottom:20 }}>
           <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📜 Matured plans</div>
           {historyInvs.map(inv => {
-            const vt = VIP_TIERS[tierForLevel(inv.level ?? 1)] ?? VIP_TIERS.silver;
+            const vt = VIP_TIERS[inv.vip_tier] ?? VIP_TIERS.silver;
             const payout = inv.expected_total + (inv.locked_task_earnings ?? 0);
             return (
               <div key={inv.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
@@ -2443,7 +2439,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend,
 // ── Active Investment Card (with live ticking profit) ──────────
 function ActiveInvestmentCard({ investment: inv, onExtend, dark }) {
   const T           = theme(dark);
-  const vt          = VIP_TIERS[tierForLevel(inv.level ?? 1)] ?? VIP_TIERS.silver;
+  const vt          = VIP_TIERS[inv.vip_tier] ?? VIP_TIERS.silver;
   const liveProfit  = useLiveProfitCounter(inv);
   const totalProfit = inv.expected_profit;
   const pct         = totalProfit > 0 ? Math.min(100, Math.round((liveProfit / totalProfit) * 100)) : 0;
@@ -2462,7 +2458,7 @@ function ActiveInvestmentCard({ investment: inv, onExtend, dark }) {
           <span style={{ fontSize:24 }}>{inv.plan_icon}</span>
           <div>
             <div style={{ fontWeight:700, fontSize:16 }}>{inv.plan_name} Plan</div>
-            <div style={{ fontSize:11, opacity:0.8 }}>30%/month · {PLAN_TERM_LABEL} term</div>
+            <div style={{ fontSize:11, opacity:0.8 }}>{inv.rate_percent}%/month · {fmtDuration(inv.duration_months)} lockup</div>
           </div>
         </div>
         <div style={{ textAlign:"right" }}>
@@ -2514,7 +2510,7 @@ function ActiveInvestmentCard({ investment: inv, onExtend, dark }) {
           style={{ width:"100%", background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"9px 0", fontSize:12, fontWeight:700, color:T.text, cursor:"pointer" }}
           onClick={onExtend}
         >
-          ⏳ Renew for another {PLAN_TERM_LABEL}
+          ⏳ Extend lockup period
         </button>
       </div>
     </div>
@@ -2525,14 +2521,17 @@ function ActiveInvestmentCard({ investment: inv, onExtend, dark }) {
 function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, dark }) {
   const T           = theme(dark);
   const vt           = VIP_TIERS[plan.vip_tier] ?? VIP_TIERS.silver;
-  const amountNum    = plan.amount; // fixed — no free-entry amount for vault plans
+  const [amount, setAmount]   = useState(String(plan.min_amount));
+  const [duration, setDuration] = useState(3); // months — user picks lockup
   const [phone, setPhone]     = useState(profile?.phone ?? "");
   const [method, setMethod]   = useState(detectMethod(profile?.phone));
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
   const [step, setStep]       = useState("confirm"); // confirm | waiting | success
 
-  const totalProfit = plan.monthlyEarnings; // flat 30% over the fixed 30-day term
+  const amountNum   = parseInt(amount, 10) || 0;
+  const amountValid = amountNum >= plan.min_amount;
+  const totalProfit = Math.floor(amountNum * plan.rate_percent / 100 * duration);
 
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
@@ -2540,7 +2539,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
     // Payment confirmed — now activate the plan in DB
     try {
-      await buyInvestmentPlan(userId, plan.key, plan.amount);
+      await buyInvestmentPlan(userId, plan.id, amountNum, duration);
       setStep("success");
       await onSuccess();
     } catch (e) {
@@ -2551,6 +2550,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
 
   const handleSubmit = async () => {
     setErr("");
+    if (!amountValid) return setErr(`Minimum for this plan is ${fmt(plan.min_amount)}`);
     if (!phone) return setErr("Enter your mobile money number");
     setLoading(true);
     try {
