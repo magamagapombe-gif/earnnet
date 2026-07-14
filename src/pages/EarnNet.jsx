@@ -5,7 +5,7 @@ import {
   getActiveTasks, completeTask, getTransactions, requestWithdrawal,
   getUserWithdrawals, requestDeposit, getUserDeposits, activateAccount,
   getReferralTree, getSettings,
-  getInvestmentPlans, getUserInvestments, buyInvestmentPlan,
+  getInvestmentPlans, getPlanDurations, getUserInvestments, buyInvestmentPlan,
   requestInvestmentPayment, matureUserInvestments,
 } from "../lib/supabase";
 
@@ -28,9 +28,14 @@ const BG_DARK    = "#0F2D22";
 // vip_tier:   the VIP label tied to this plan
 const PLAN_TIERS = {
   Starter: { icon:"🌱", dailyTasks:8,   multiplier:1.10, color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)", badge:"#E1F5EE", badgeText:BRAND_DARK,  vip:"silver",   exclusiveTasks:false },
+  Bronze:  { icon:"🥉", dailyTasks:10,  multiplier:1.13, color:"#A0522D", gradient:"linear-gradient(135deg,#5A2E14,#A0522D)", badge:"#F3E3D8", badgeText:"#5A2E14",   vip:"silver",   exclusiveTasks:false },
+  Silver:  { icon:"🥈", dailyTasks:12,  multiplier:1.16, color:"#9E9E9E", gradient:"linear-gradient(135deg,#4A4A4A,#9E9E9E)", badge:"#F0F0F0", badgeText:"#4A4A4A",   vip:"silver",   exclusiveTasks:false },
   Growth:  { icon:"🌿", dailyTasks:15,  multiplier:1.20, color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)", badge:"#E6F1FB", badgeText:"#185FA5",   vip:"gold",     exclusiveTasks:false },
+  Advance: { icon:"🚀", dailyTasks:20,  multiplier:1.28, color:"#2E7D8C", gradient:"linear-gradient(135deg,#12414A,#2E7D8C)", badge:"#E1F1F3", badgeText:"#12414A",   vip:"gold",     exclusiveTasks:false },
   Premium: { icon:"🌳", dailyTasks:25,  multiplier:1.35, color:"#E5873A", gradient:"linear-gradient(135deg,#854F0B,#E5873A)", badge:"#FAEEDA", badgeText:"#854F0B",   vip:"gold",     exclusiveTasks:false },
+  Pro:     { icon:"⚡", dailyTasks:32,  multiplier:1.42, color:"#C0392B", gradient:"linear-gradient(135deg,#5C1A11,#C0392B)", badge:"#F8DEDA", badgeText:"#5C1A11",   vip:"platinum", exclusiveTasks:false },
   Elite:   { icon:"💎", dailyTasks:40,  multiplier:1.50, color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)", badge:"#F0EEFF",  badgeText:"#7B61FF",  vip:"platinum", exclusiveTasks:false },
+  Diamond: { icon:"💠", dailyTasks:50,  multiplier:1.65, color:"#1AA7B0", gradient:"linear-gradient(135deg,#0D4F54,#1AA7B0)", badge:"#DFF6F7", badgeText:"#0D4F54",   vip:"platinum", exclusiveTasks:false },
   Legend:  { icon:"👑", dailyTasks:null, multiplier:2.00, color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", badge:"#FFF8E1", badgeText:"#7A5000", vip:"legend",  exclusiveTasks:true  },
 };
 
@@ -2209,7 +2214,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
   const activePlanNames = activeInvs.map(i => i.plan_name);
 
   // Highest active plan for task limit display
-  const planOrder   = ["Starter","Growth","Premium","Elite","Legend"];
+  const planOrder   = ["Starter","Bronze","Silver","Growth","Advance","Premium","Pro","Elite","Diamond","Legend"];
   const highestPlan = planOrder.slice().reverse().find(p => activePlanNames.includes(p));
   const tierInfo    = highestPlan ? PLAN_TIERS[highestPlan] : null;
 
@@ -2510,9 +2515,36 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const [err, setErr]         = useState("");
   const [step, setStep]       = useState("confirm"); // confirm | waiting | success
 
+  // Duration options for this plan — longer lock-in pays a better daily rate
+  const [durations, setDurations]   = useState([]);
+  const [durLoading, setDurLoading] = useState(true);
+  const [selectedDur, setSelectedDur] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setDurLoading(true);
+      try {
+        const opts = await getPlanDurations(plan.id);
+        if (cancelled) return;
+        setDurations(opts);
+        // Default to the plan's original duration if it's in the list, else the shortest
+        const preferred = opts.find(o => o.duration_days === plan.duration_days) ?? opts[0];
+        setSelectedDur(preferred ?? null);
+      } catch (e) {
+        console.error("getPlanDurations failed:", e);
+      } finally {
+        if (!cancelled) setDurLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [plan.id]);
+
   // Amount the user needs to actually pay
-  const amountToPay = plan.upgradeCost ?? plan.amount;
-  const totalProfit = Math.floor(plan.amount * plan.daily_rate * plan.duration_days);
+  const amountToPay   = plan.upgradeCost ?? plan.amount;
+  const activeDailyRate  = selectedDur ? parseFloat(selectedDur.daily_rate) : plan.daily_rate;
+  const activeDuration   = selectedDur ? selectedDur.duration_days : plan.duration_days;
+  const totalProfit = Math.floor(plan.amount * activeDailyRate * activeDuration);
 
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
@@ -2520,7 +2552,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
     // Payment confirmed — now activate the plan in DB
     try {
-      await buyInvestmentPlan(userId, plan.id, amountToPay);
+      await buyInvestmentPlan(userId, plan.id, activeDuration, amountToPay);
       setStep("success");
       await onSuccess();
     } catch (e) {
@@ -2532,6 +2564,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const handleSubmit = async () => {
     setErr("");
     if (!phone) return setErr("Enter your mobile money number");
+    if (!selectedDur) return setErr("Choose how long you want to invest for");
     setLoading(true);
     try {
       await requestInvestmentPayment(userId, amountToPay, method, phone);
@@ -2557,7 +2590,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px", marginBottom:24 }}>
             <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Expected profit at maturity</div>
             <div style={{ fontFamily:"'Sora',sans-serif", fontSize:28, fontWeight:700, color:BRAND_DARK }}>{fmt(totalProfit)}</div>
-            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>in {plan.duration_days} days</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>in {activeDuration} days</div>
           </div>
           <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px", background:meta.gradient }} onClick={onClose}>
             Watch it grow →
@@ -2605,7 +2638,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
                 {plan.hasLower ? `Upgrade to ${plan.name}` : `${plan.name} Plan`}
               </div>
               <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                {Math.round(plan.daily_rate * 100)}% daily return · {plan.duration_days} days
+                {(activeDailyRate*100).toFixed(2)}% daily return · {activeDuration} days
               </div>
             </div>
             <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
@@ -2613,13 +2646,43 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
         </div>
 
         <div style={{ padding:"20px 22px 32px" }}>
+          {/* Duration picker — longer lock-in pays a better daily rate */}
+          <div style={{ marginBottom:16 }}>
+            <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:8, fontWeight:500 }}>Choose your duration</label>
+            {durLoading ? (
+              <div style={{ fontSize:12, color:T.textSub }}>Loading durations…</div>
+            ) : durations.length === 0 ? (
+              <div style={{ fontSize:12, color:T.textSub }}>No durations available for this plan yet.</div>
+            ) : (
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                {durations.map(d => {
+                  const isSel = selectedDur?.id === d.id;
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => setSelectedDur(d)}
+                      style={{
+                        padding:"8px 12px", borderRadius:10, fontSize:12, fontWeight:600, cursor:"pointer",
+                        border: isSel ? `1.5px solid ${meta.color}` : `0.5px solid ${T.border}`,
+                        background: isSel ? meta.badge : (dark ? "#142e20" : "#f7faf9"),
+                        color: isSel ? meta.badgeText : T.text,
+                      }}
+                    >
+                      {d.duration_days}d · {(parseFloat(d.daily_rate)*100).toFixed(2)}%/day
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Summary cards */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
             {[
               ["You pay", fmt(amountToPay)],
               ["You earn", fmt(totalProfit)],
-              ["Duration", `${plan.duration_days} days`],
-              ["Daily rate", `${Math.round(plan.daily_rate*100)}%`],
+              ["Duration", `${activeDuration} days`],
+              ["Daily rate", `${(activeDailyRate*100).toFixed(2)}%`],
             ].map(([lbl, val]) => (
               <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
@@ -2643,7 +2706,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
             📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
           </div>
 
-          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:meta.gradient }} onClick={handleSubmit} disabled={loading}>
+          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:meta.gradient, opacity: (!selectedDur || loading) ? 0.6 : 1 }} onClick={handleSubmit} disabled={loading || !selectedDur}>
             {loading ? "Sending prompt..." : `Pay ${fmt(amountToPay)} & activate →`}
           </button>
           <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:10, lineHeight:1.6 }}>

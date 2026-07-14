@@ -307,6 +307,18 @@ export async function getInvestmentPlans() {
   return data ?? [];
 }
 
+/** Fetch the duration/rate options available for a given plan */
+export async function getPlanDurations(planId) {
+  const { data, error } = await supabase
+    .from("plan_durations")
+    .select("*")
+    .eq("plan_id", planId)
+    .eq("is_active", true)
+    .order("duration_days");
+  if (error) throw error;
+  return data ?? [];
+}
+
 /** Fetch all investments for a user (active + paid_out) */
 export async function getUserInvestments(userId) {
   const { data, error } = await supabase
@@ -319,17 +331,18 @@ export async function getUserInvestments(userId) {
 }
 
 /**
- * Buy an investment plan.
+ * Buy an investment plan at a chosen duration.
  * amountPaid = difference paid via MoMo (full amount for new plan,
  * difference only for upgrades).
  * The LivePay deposit must be confirmed BEFORE calling this —
  * call it in the same polling-success callback you use for deposits.
  */
-export async function buyInvestmentPlan(userId, planId, amountPaid) {
+export async function buyInvestmentPlan(userId, planId, durationDays, amountPaid) {
   const { data, error } = await supabase.rpc("buy_investment_plan", {
-    p_user_id:     userId,
-    p_plan_id:     planId,
-    p_amount_paid: amountPaid,
+    p_user_id:      userId,
+    p_plan_id:      planId,
+    p_duration_days: durationDays,
+    p_amount_paid:  amountPaid,
   });
   if (error) throw error;
   return data;
