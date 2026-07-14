@@ -197,7 +197,7 @@ const TICKER_EVENTS = [
   { icon:"💸", msg:"David from Kampala just withdrew UGX 32,000" },
   { icon:"✅", msg:"Mercy completed a YouTube task and earned UGX 500" },
   { icon:"👥", msg:"James referred a friend and earned UGX 3,000 commission" },
-  { icon:"🌱", msg:"Sandra activated a 3-month Growth plan — 5% return" },
+  { icon:"🌱", msg:"Sandra activated a 3-month Growth plan — 6% return" },
   { icon:"💸", msg:"Robert from Gulu withdrew UGX 18,000 to MTN MoMo" },
   { icon:"🔥", msg:"Patricia hit a 7-day streak and earned a bonus!" },
   { icon:"✅", msg:"Patrick watched a video ad and earned UGX 400" },
