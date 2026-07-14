@@ -92,7 +92,7 @@ export default function AdminApp() {
   async function loadInvestments() {
     const { data: invData } = await supabase
       .from("user_investments")
-      .select("*, profiles(name, phone, vip_tier), investment_plans(name, daily_rate, duration_days)")
+      .select("*, profiles(name, phone)")
       .order("created_at", { ascending: false });
     setInvestments(invData ?? []);
     const { data: planData } = await supabase
@@ -146,21 +146,25 @@ export default function AdminApp() {
 
   const handlePlanSave = async (planData) => {
     try {
+      const payload = {
+        name:            planData.name,
+        icon:            planData.icon || "🌱",
+        duration_months: parseInt(planData.duration_months),
+        min_amount:      parseInt(planData.min_amount),
+        rate_percent:    Math.min(10, parseFloat(planData.rate_percent)), // hard cap 10%
+        vip_tier:        planData.vip_tier,
+        task_limit:      planData.task_limit === "" ? null : parseInt(planData.task_limit),
+        multiplier:      parseFloat(planData.multiplier || 1.1),
+        is_active:       planData.is_active,
+      };
       if (planData.id) {
-        await supabase.from("investment_plans").update({
-          name: planData.name, amount: parseInt(planData.amount),
-          daily_rate: parseFloat(planData.daily_rate),
-          duration_days: parseInt(planData.duration_days),
-          is_active: planData.is_active,
-        }).eq("id", planData.id);
+        await supabase.from("investment_plans").update(payload).eq("id", planData.id);
       } else {
-        await supabase.from("investment_plans").insert({
-          name: planData.name, amount: parseInt(planData.amount),
-          daily_rate: parseFloat(planData.daily_rate),
-          duration_days: parseInt(planData.duration_days),
-          sort_order: invPlans.length + 1,
-          is_active: true,
-        });
+        if (invPlans.length >= 10) {
+          showToast("Max 10 plans allowed — pause or edit an existing one", "error");
+          return;
+        }
+        await supabase.from("investment_plans").insert({ ...payload, sort_order: invPlans.length + 1 });
       }
       showToast("Plan saved ✓");
       setPlanModal(null);
@@ -581,9 +585,19 @@ function SettingsTab({ settings, onSave }) {
         <div style={A.cardTitle}>Activation & deposits</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
           <div><label style={A.label}>Activation fee (UGX)</label><input style={A.input} type="number" value={form.activation_fee ?? ""} onChange={e => set("activation_fee", e.target.value)} /></div>
-          <div><label style={A.label}>Referral bonus on activation (UGX)</label><input style={A.input} type="number" value={form.ref1_rate ?? ""} onChange={e => set("ref1_rate", e.target.value)} /></div>
           <div><label style={A.label}>Min deposit (UGX)</label><input style={A.input} type="number" value={form.min_deposit ?? ""} onChange={e => set("min_deposit", e.target.value)} /></div>
           <div><label style={A.label}>Deposit platform fee (%)</label><input style={A.input} type="number" value={form.deposit_fee_pct ?? ""} onChange={e => set("deposit_fee_pct", e.target.value)} /></div>
+        </div>
+      </div>
+
+      <div style={{ ...A.card, marginTop: 16 }}>
+        <div style={A.cardTitle}>Growth plan referral commission</div>
+        <div style={{ fontSize:12, color:"#888", marginTop:6, marginBottom:12 }}>
+          Paid only when someone buys a growth plan — as a % of the amount they pay. No sign-up bonus, no per-task referral.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div><label style={A.label}>Level 1 — direct referral (%)</label><input style={A.input} type="number" step="0.5" value={form.ref1_rate ?? ""} onChange={e => set("ref1_rate", e.target.value)} /></div>
+          <div><label style={A.label}>Level 2 — their referral (%)</label><input style={A.input} type="number" step="0.5" value={form.ref2_rate ?? ""} onChange={e => set("ref2_rate", e.target.value)} /></div>
         </div>
       </div>
 
@@ -606,7 +620,6 @@ function SettingsTab({ settings, onSave }) {
       <div style={{ ...A.card, marginTop: 16 }}>
         <div style={A.cardTitle}>Rewards</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
-          <div><label style={A.label}>Sign-up bonus (UGX)</label><input style={A.input} type="number" value={form.signup_bonus ?? ""} onChange={e => set("signup_bonus", e.target.value)} /></div>
           <div><label style={A.label}>7-day streak bonus (UGX)</label><input style={A.input} type="number" value={form.streak_bonus ?? ""} onChange={e => set("streak_bonus", e.target.value)} /></div>
           <div><label style={A.label}>Platform fee on tasks (%)</label><input style={A.input} type="number" value={form.platform_fee ?? ""} onChange={e => set("platform_fee", e.target.value)} /></div>
         </div>
@@ -762,8 +775,7 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
 }
 
 // ── Grow / Investment Admin Tab ───────────────────────────────
-const PLAN_COLORS = { Starter:"#1D9E75", Growth:"#185FA5", Premium:"#E5873A", Elite:"#7B61FF", Legend:"#B8860B" };
-const PLAN_ICONS  = { Starter:"🌱", Growth:"🌿", Premium:"🌳", Elite:"💎", Legend:"👑" };
+const VIP_COLORS = { silver:"#1D9E75", gold:"#185FA5", platinum:"#7B61FF", legend:"#B8860B" };
 
 function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) {
   const [filter, setFilter] = useState("all"); // all | active | paid_out
@@ -771,7 +783,7 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
 
   const activeInvs  = investments.filter(i => i.status === "active");
   const totalInvested = activeInvs.reduce((s, i) => s + i.amount, 0);
-  const totalProfit   = activeInvs.reduce((s, i) => s + Math.floor(i.amount * parseFloat(i.daily_rate) * i.duration_days), 0);
+  const totalProfit   = activeInvs.reduce((s, i) => s + (i.expected_profit ?? 0), 0);
 
   // Per-plan investor counts
   const planCounts = plans.reduce((acc, p) => {
@@ -819,27 +831,27 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
         <table style={A.table}>
           <thead>
             <tr style={{ borderBottom:"1px solid #f0f0f0" }}>
-              {["Plan","Buy-in","Daily Rate","Duration","Total Return","Investors","Status","Actions"].map(h => (
+              {["Plan","Minimum","Return","Duration","Profit on min","Investors","Status","Actions"].map(h => (
                 <th key={h} style={A.th}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {plans.map(p => {
-              const profit = Math.floor(p.amount * p.daily_rate * p.duration_days);
-              const color  = PLAN_COLORS[p.name] ?? "#888";
+              const profit = Math.floor(p.min_amount * p.rate_percent / 100);
+              const color  = VIP_COLORS[p.vip_tier] ?? "#888";
               return (
                 <tr key={p.id} style={{ borderBottom:"0.5px solid #f5f5f5" }}>
                   <td style={A.td}>
                     <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                      <span style={{ fontSize:20 }}>{PLAN_ICONS[p.name] ?? "📦"}</span>
+                      <span style={{ fontSize:20 }}>{p.icon ?? "📦"}</span>
                       <span style={{ fontWeight:600 }}>{p.name}</span>
                     </div>
                   </td>
-                  <td style={A.td}>{fmt(p.amount)}</td>
-                  <td style={A.td}><span style={{ fontWeight:700, color }}>{(p.daily_rate*100).toFixed(0)}%</span>/day</td>
-                  <td style={A.td}>{p.duration_days} days</td>
-                  <td style={A.td}>{fmt(p.amount + profit)}</td>
+                  <td style={A.td}>{fmt(p.min_amount)}</td>
+                  <td style={A.td}><span style={{ fontWeight:700, color }}>{p.rate_percent}%</span></td>
+                  <td style={A.td}>{p.duration_months === 1 ? "1 month" : p.duration_months === 12 ? "1 year" : `${p.duration_months} months`}</td>
+                  <td style={A.td}>{fmt(profit)}</td>
                   <td style={A.td}>
                     <span style={{ background:"#E1F5EE", color:"#0F6E56", borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:600 }}>
                       {planCounts[p.name] ?? 0} active
@@ -886,10 +898,10 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
             {filtered.length === 0
               ? <tr><td colSpan={7} style={{ padding:30, textAlign:"center", color:"#aaa", fontSize:13 }}>No investments found</td></tr>
               : filtered.map(inv => {
-                const profit   = Math.floor(inv.amount * parseFloat(inv.daily_rate) * inv.duration_days);
+                const profit   = inv.expected_profit ?? 0;
                 const daysLeft = Math.max(0, Math.ceil((new Date(inv.ends_at) - new Date()) / 86400000));
                 const isSoon   = daysLeft <= 3 && inv.status === "active";
-                const color    = PLAN_COLORS[inv.plan_name] ?? "#888";
+                const color    = VIP_COLORS[inv.vip_tier] ?? "#888";
                 return (
                   <tr key={inv.id} style={{ borderBottom:"0.5px solid #f5f5f5", background: isSoon ? "#FFFBF0" : "white" }}>
                     <td style={A.td}>
@@ -898,12 +910,12 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
                     </td>
                     <td style={A.td}>
                       <span style={{ color, fontWeight:700, fontSize:13 }}>
-                        {PLAN_ICONS[inv.plan_name]} {inv.plan_name}
+                        {inv.plan_icon} {inv.plan_name}
                       </span>
                     </td>
                     <td style={A.td}>{fmt(inv.amount)}</td>
-                    <td style={A.td} style={{ color:"#0F6E56", fontWeight:600 }}>+{fmt(profit)}</td>
-                    <td style={A.td} style={{ fontSize:12, color:"#888" }}>{new Date(inv.starts_at).toLocaleDateString()}</td>
+                    <td style={{ ...A.td, color:"#0F6E56", fontWeight:600 }}>+{fmt(profit)}</td>
+                    <td style={{ ...A.td, fontSize:12, color:"#888" }}>{new Date(inv.starts_at).toLocaleDateString()}</td>
                     <td style={A.td}>
                       <div style={{ fontSize:12 }}>{new Date(inv.ends_at).toLocaleDateString()}</div>
                       {inv.status === "active" && (
@@ -932,64 +944,97 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
 function PlanModal({ plan, onClose, onSave }) {
   const isNew = !plan;
   const [form, setForm] = useState({
-    id:           plan?.id ?? null,
-    name:         plan?.name ?? "",
-    amount:       plan?.amount ?? "",
-    daily_rate:   plan ? (plan.daily_rate * 100).toFixed(0) : "",
-    duration_days:plan?.duration_days ?? "",
-    is_active:    plan?.is_active ?? true,
+    id:              plan?.id ?? null,
+    name:            plan?.name ?? "",
+    icon:            plan?.icon ?? "🌱",
+    min_amount:      plan?.min_amount ?? "",
+    rate_percent:    plan?.rate_percent ?? "",
+    duration_months: plan?.duration_months ?? 1,
+    vip_tier:        plan?.vip_tier ?? "silver",
+    task_limit:      plan?.task_limit ?? "",
+    multiplier:      plan?.multiplier ?? 1.1,
+    is_active:       plan?.is_active ?? true,
   });
   const [saving, setSaving] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const totalProfit = form.amount && form.daily_rate && form.duration_days
-    ? Math.floor(parseInt(form.amount) * (parseFloat(form.daily_rate)/100) * parseInt(form.duration_days))
+  const rateCapped  = form.rate_percent !== "" && parseFloat(form.rate_percent) > 10;
+  const exampleProfit = form.min_amount && form.rate_percent
+    ? Math.floor(parseInt(form.min_amount) * (parseFloat(form.rate_percent) / 100))
     : 0;
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave({ ...form, daily_rate: (parseFloat(form.daily_rate) / 100).toFixed(4) });
+    await onSave(form);
     setSaving(false);
   };
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300 }} onClick={onClose}>
-      <div style={{ background:"white", borderRadius:20, padding:28, width:440, animation:"slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontWeight:700, fontSize:18, marginBottom:20 }}>{isNew ? "Create Investment Plan" : `Edit ${plan.name} Plan`}</div>
+      <div style={{ background:"white", borderRadius:20, padding:28, width:460, animation:"slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontWeight:700, fontSize:18, marginBottom:20 }}>{isNew ? "Create Growth Plan" : `Edit ${plan.name} Plan`}</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-          <div style={{ gridColumn:"1/-1" }}>
+          <div>
             <label style={A.label}>Plan name</label>
-            <input style={A.input} placeholder="e.g. Starter" value={form.name} onChange={e => set("name", e.target.value)} />
+            <input style={A.input} placeholder="e.g. Bronze" value={form.name} onChange={e => set("name", e.target.value)} />
           </div>
           <div>
-            <label style={A.label}>Buy-in amount (UGX)</label>
-            <input style={A.input} type="number" placeholder="10000" value={form.amount} onChange={e => set("amount", e.target.value)} />
+            <label style={A.label}>Icon (emoji)</label>
+            <input style={A.input} placeholder="🌱" value={form.icon} onChange={e => set("icon", e.target.value)} />
           </div>
           <div>
-            <label style={A.label}>Daily return rate (%)</label>
-            <input style={A.input} type="number" placeholder="3" step="0.1" value={form.daily_rate} onChange={e => set("daily_rate", e.target.value)} />
+            <label style={A.label}>Minimum amount (UGX)</label>
+            <input style={A.input} type="number" placeholder="300000" value={form.min_amount} onChange={e => set("min_amount", e.target.value)} />
+            <div style={{ fontSize:10, color:"#aaa", marginTop:4 }}>Users can invest this amount or more. Use 2,000,000+ for 1-year plans.</div>
           </div>
           <div>
-            <label style={A.label}>Duration (days)</label>
-            <input style={A.input} type="number" placeholder="7" value={form.duration_days} onChange={e => set("duration_days", e.target.value)} />
+            <label style={A.label}>Return rate (%) — max 10</label>
+            <input style={{ ...A.input, borderColor: rateCapped ? "#E24B4A" : "#ddd" }} type="number" min="0" max="10" step="0.5" placeholder="8" value={form.rate_percent} onChange={e => set("rate_percent", e.target.value)} />
+            {rateCapped && <div style={{ fontSize:10, color:"#E24B4A", marginTop:4 }}>Will be capped at 10% on save.</div>}
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:10, paddingTop:20 }}>
+          <div>
+            <label style={A.label}>Period</label>
+            <select style={A.input} value={form.duration_months} onChange={e => set("duration_months", parseInt(e.target.value))}>
+              <option value={1}>1 month</option>
+              <option value={3}>3 months</option>
+              <option value={6}>6 months</option>
+              <option value={12}>1 year</option>
+            </select>
+          </div>
+          <div>
+            <label style={A.label}>VIP tier (task-unlock styling)</label>
+            <select style={A.input} value={form.vip_tier} onChange={e => set("vip_tier", e.target.value)}>
+              <option value="silver">🥈 Silver</option>
+              <option value="gold">🥇 Gold</option>
+              <option value="platinum">💎 Platinum</option>
+              <option value="legend">👑 Legend</option>
+            </select>
+          </div>
+          <div>
+            <label style={A.label}>Tasks/day unlocked (blank = unlimited)</label>
+            <input style={A.input} type="number" placeholder="15" value={form.task_limit} onChange={e => set("task_limit", e.target.value)} />
+          </div>
+          <div>
+            <label style={A.label}>Task reward multiplier</label>
+            <input style={A.input} type="number" step="0.05" placeholder="1.20" value={form.multiplier} onChange={e => set("multiplier", e.target.value)} />
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, paddingTop:8, gridColumn:"1/-1" }}>
             <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => set("is_active", e.target.checked)} style={{ width:16, height:16 }} />
             <label htmlFor="is_active" style={{ fontSize:13, fontWeight:500 }}>Plan is active (visible to users)</label>
           </div>
         </div>
 
-        {totalProfit > 0 && (
+        {exampleProfit > 0 && (
           <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px 16px", marginTop:16 }}>
-            <div style={{ fontSize:12, color:"#0F6E56", marginBottom:4 }}>Preview</div>
+            <div style={{ fontSize:12, color:"#0F6E56", marginBottom:4 }}>Preview — on the minimum amount</div>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
-              <span>User invests</span><strong>{fmt(form.amount)}</strong>
+              <span>User invests</span><strong>{fmt(form.min_amount)}</strong>
             </div>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginTop:4 }}>
-              <span>Profit at maturity</span><strong style={{ color:"#0F6E56" }}>+{fmt(totalProfit)}</strong>
+              <span>Profit at maturity</span><strong style={{ color:"#0F6E56" }}>+{fmt(exampleProfit)}</strong>
             </div>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginTop:4, borderTop:"0.5px solid #b2dfdb", paddingTop:6 }}>
-              <span>Total payout</span><strong>{fmt(parseInt(form.amount || 0) + totalProfit)}</strong>
+              <span>Total payout</span><strong>{fmt(parseInt(form.min_amount || 0) + exampleProfit)}</strong>
             </div>
           </div>
         )}

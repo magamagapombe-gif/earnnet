@@ -307,23 +307,14 @@ export async function getInvestmentPlans() {
   return data ?? [];
 }
 
-/** Fetch the duration/rate options available for a given plan */
-export async function getPlanDurations(planId) {
-  const { data, error } = await supabase
-    .from("plan_durations")
-    .select("*")
-    .eq("plan_id", planId)
-    .eq("is_active", true)
-    .order("duration_days");
-  if (error) throw error;
-  return data ?? [];
-}
-
-/** Fetch all investments for a user (active + paid_out) */
+/** Fetch all investments for a user (active + paid_out).
+ *  Every field needed for display (name, icon, amount, rate,
+ *  duration, vip tier, profit) is snapshotted directly onto each
+ *  row at purchase time, so no join is needed. */
 export async function getUserInvestments(userId) {
   const { data, error } = await supabase
     .from("user_investments")
-    .select("*, investment_plans(name, amount, daily_rate, duration_days)")
+    .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -331,18 +322,16 @@ export async function getUserInvestments(userId) {
 }
 
 /**
- * Buy an investment plan at a chosen duration.
- * amountPaid = difference paid via MoMo (full amount for new plan,
- * difference only for upgrades).
+ * Buy a growth plan with a custom amount (must be >= plan.min_amount).
  * The LivePay deposit must be confirmed BEFORE calling this —
  * call it in the same polling-success callback you use for deposits.
+ * Pays 2-level referral commission out of `amount` server-side.
  */
-export async function buyInvestmentPlan(userId, planId, durationDays, amountPaid) {
+export async function buyInvestmentPlan(userId, planId, amount) {
   const { data, error } = await supabase.rpc("buy_investment_plan", {
-    p_user_id:      userId,
-    p_plan_id:      planId,
-    p_duration_days: durationDays,
-    p_amount_paid:  amountPaid,
+    p_user_id: userId,
+    p_plan_id: planId,
+    p_amount:  amount,
   });
   if (error) throw error;
   return data;
