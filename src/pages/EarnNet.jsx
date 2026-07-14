@@ -23,24 +23,32 @@ const BRAND      = "#1D9E75";
 const BRAND_DARK = "#0F6E56";
 const BG_DARK    = "#0F2D22";
 
-// ── Vault Plans — fixed 11-tier ladder ────────────────────────
+// ── Vault Plans — fixed 16-tier ladder ────────────────────────
 // Every plan fully determines its own amount, daily task count, and
-// per-task reward. All 11 tiers currently return a flat 30%/month,
+// per-task reward. All 16 tiers currently return a flat 30%/month,
 // delivered as taskReward × dailyTasks × 30 days (fixed 30-day term).
+// Five tiers (Starter, Sprout, Climber, Vanguard, Pioneer) were added
+// between the original amounts to smooth out the biggest jumps
+// (e.g. 45,000 → 180,000 was a 4x gap with nothing in between).
 // NOTE: the 30% rate below is a placeholder — per-tier rates will
 // replace this flat figure once the new rate model is calculated.
 const VAULT_PLANS = [
   { level:1,  key:"beginner",   name:"Beginner",   icon:"🌱", amount:45000,      dailyTasks:1,  taskReward:450,   ratePercent:30 },
-  { level:2,  key:"seed",       name:"Seed",       icon:"🌱", amount:180000,     dailyTasks:3,  taskReward:600,   ratePercent:30 },
-  { level:3,  key:"rising",     name:"Rising",     icon:"🌅", amount:600000,     dailyTasks:6,  taskReward:1000,  ratePercent:30 },
-  { level:4,  key:"nova",       name:"Nova",       icon:"💡", amount:1350000,    dailyTasks:11, taskReward:1227,  ratePercent:30 },
-  { level:5,  key:"mastermind", name:"Mastermind", icon:"🧠", amount:4050000,    dailyTasks:18, taskReward:2250,  ratePercent:30 },
-  { level:6,  key:"titan",      name:"Titan",      icon:"💪", amount:8775000,    dailyTasks:25, taskReward:3510,  ratePercent:30 },
-  { level:7,  key:"king",       name:"King",       icon:"👑", amount:16650000,   dailyTasks:34, taskReward:4897,  ratePercent:30 },
-  { level:8,  key:"emperor",    name:"Emperor",    icon:"🦅", amount:29700000,   dailyTasks:44, taskReward:6750,  ratePercent:30 },
-  { level:9,  key:"icon",       name:"Icon",       icon:"⭐", amount:48600000,   dailyTasks:55, taskReward:8836,  ratePercent:30 },
-  { level:10, key:"supreme",    name:"Supreme",    icon:"👑", amount:74250000,   dailyTasks:66, taskReward:11250, ratePercent:30 },
-  { level:11, key:"legendary",  name:"Legendary",  icon:"🏆", amount:110000000,  dailyTasks:75, taskReward:14667, ratePercent:30 },
+  { level:2,  key:"starter",    name:"Starter",    icon:"🌿", amount:100000,     dailyTasks:2,  taskReward:500,   ratePercent:30 },
+  { level:3,  key:"seed",       name:"Seed",       icon:"🌱", amount:180000,     dailyTasks:3,  taskReward:600,   ratePercent:30 },
+  { level:4,  key:"sprout",     name:"Sprout",     icon:"🌾", amount:300000,     dailyTasks:4,  taskReward:750,   ratePercent:30 },
+  { level:5,  key:"rising",     name:"Rising",     icon:"🌅", amount:600000,     dailyTasks:6,  taskReward:1000,  ratePercent:30 },
+  { level:6,  key:"climber",    name:"Climber",    icon:"🧗", amount:900000,     dailyTasks:8,  taskReward:1125,  ratePercent:30 },
+  { level:7,  key:"nova",       name:"Nova",       icon:"💡", amount:1350000,    dailyTasks:11, taskReward:1227,  ratePercent:30 },
+  { level:8,  key:"vanguard",   name:"Vanguard",   icon:"🚀", amount:2700000,    dailyTasks:14, taskReward:1929,  ratePercent:30 },
+  { level:9,  key:"mastermind", name:"Mastermind", icon:"🧠", amount:4050000,    dailyTasks:18, taskReward:2250,  ratePercent:30 },
+  { level:10, key:"pioneer",    name:"Pioneer",    icon:"🛡️", amount:6000000,    dailyTasks:21, taskReward:2857,  ratePercent:30 },
+  { level:11, key:"titan",      name:"Titan",      icon:"💪", amount:8775000,    dailyTasks:25, taskReward:3510,  ratePercent:30 },
+  { level:12, key:"king",       name:"King",       icon:"👑", amount:16650000,   dailyTasks:34, taskReward:4897,  ratePercent:30 },
+  { level:13, key:"emperor",    name:"Emperor",    icon:"🦅", amount:29700000,   dailyTasks:44, taskReward:6750,  ratePercent:30 },
+  { level:14, key:"icon",       name:"Icon",       icon:"⭐", amount:48600000,   dailyTasks:55, taskReward:8836,  ratePercent:30 },
+  { level:15, key:"supreme",    name:"Supreme",    icon:"👑", amount:74250000,   dailyTasks:66, taskReward:11250, ratePercent:30 },
+  { level:16, key:"legendary",  name:"Legendary",  icon:"🏆", amount:110000000,  dailyTasks:75, taskReward:14667, ratePercent:30 },
 ].map(p => ({ ...p, monthlyEarnings: p.taskReward * p.dailyTasks * 30, durationDays: 30 }));
 
 const planByLevel = (level) => VAULT_PLANS.find(p => p.level === level);
@@ -48,10 +56,10 @@ const planByLevel = (level) => VAULT_PLANS.find(p => p.level === level);
 // Visual badge styling bucketed by level range — colour/gradient only.
 // Amount, tasks, reward, and rate all come from the plan itself, not from here.
 const TIER_BANDS = [
-  { min:9,  label:"👑 Legend",   color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", badgeText:"#7A5000" }, // Icon → Legendary
-  { min:6,  label:"💎 Platinum", color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)",          badgeText:"#7B61FF" }, // Titan → Emperor
-  { min:3,  label:"🥇 Gold",     color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)",          badgeText:"#185FA5" }, // Rising → Mastermind
-  { min:1,  label:"🥈 Silver",   color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)",          badgeText:BRAND_DARK }, // Beginner → Seed
+  { min:14, label:"👑 Legend",   color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", badgeText:"#7A5000" }, // Icon → Legendary
+  { min:11, label:"💎 Platinum", color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)",          badgeText:"#7B61FF" }, // Titan → Emperor
+  { min:5,  label:"🥇 Gold",     color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)",          badgeText:"#185FA5" }, // Rising → Pioneer
+  { min:1,  label:"🥈 Silver",   color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)",          badgeText:BRAND_DARK }, // Beginner → Sprout
 ];
 const tierStyle = (level) => (TIER_BANDS.find(b => level >= b.min) ?? TIER_BANDS[TIER_BANDS.length - 1]);
 
@@ -59,7 +67,7 @@ const tierStyle = (level) => (TIER_BANDS.find(b => level >= b.min) ?? TIER_BANDS
 const fmtDuration = () => "30 days";
 
 // Given a user's investments, find the highest-level ACTIVE plan.
-// Each user_investments row stores plan_level (1–11), a snapshot of
+// Each user_investments row stores plan_level (1–16), a snapshot of
 // plan_name/plan_icon taken at purchase time.
 function getActiveTier(investments) {
   const active = (investments ?? []).filter(i => i.status === "active");
@@ -74,7 +82,7 @@ function getActiveTier(investments) {
     ratePercent: plan.ratePercent,
     icon:        best.plan_icon ?? plan.icon,
     planName:    best.plan_name ?? plan.name,
-    exclusiveTasks: best.plan_level === 11,
+    exclusiveTasks: best.plan_level === 16,
     label: style.label,
     perk: `Level ${best.plan_level} vault plan`,
     ...style,
@@ -2336,7 +2344,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
         </div>
         {plans.map(plan => {
           const vt    = tierStyle(plan.level);
-          const isTop = plan.level === 11;
+          const isTop = plan.level === 16;
 
           return (
             <div key={plan.key} style={{
