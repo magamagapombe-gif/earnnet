@@ -2525,8 +2525,11 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   // Amount and term are fixed per plan — nothing for the user to pick here.
   const amountNum     = plan.amount;
   const duration      = plan.durationDays;
+  const walletBalance = profile?.balance ?? 0;
+  const walletEnough  = walletBalance >= amountNum;
   const [phone, setPhone]     = useState(profile?.phone ?? "");
   const [method, setMethod]   = useState(detectMethod(profile?.phone));
+  const [payWith, setPayWith] = useState(walletEnough ? "wallet" : "mobile"); // wallet | mobile
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
   const [step, setStep]       = useState("confirm"); // confirm | waiting | success
@@ -2550,6 +2553,23 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
 
   const handleSubmit = async () => {
     setErr("");
+
+    // Paying from existing wallet balance — no mobile money prompt needed,
+    // the same way a reinvestment skips a fresh payment.
+    if (payWith === "wallet") {
+      if (!walletEnough) return setErr("Your wallet balance is too low for this plan");
+      setLoading(true);
+      try {
+        await buyInvestmentPlan(userId, plan.level, amountNum, duration);
+        setStep("success");
+        await onSuccess();
+      } catch (e) {
+        setErr(e.message ?? "Investment failed");
+      }
+      setLoading(false);
+      return;
+    }
+
     if (!phone) return setErr("Enter your mobile money number");
     setLoading(true);
     try {
@@ -2649,17 +2669,56 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
             ))}
           </div>
 
-          <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Mobile money number</label>
-          <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:8 }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
-          <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5", marginBottom:16 }}>
-            📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
+          <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Pay with</label>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
+            <button
+              type="button"
+              onClick={() => setPayWith("wallet")}
+              disabled={!walletEnough}
+              style={{
+                textAlign:"left", padding:"12px 14px", borderRadius:12, cursor: walletEnough ? "pointer" : "not-allowed",
+                border: payWith === "wallet" ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
+                background: payWith === "wallet" ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+                opacity: walletEnough ? 1 : 0.5,
+              }}
+            >
+              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>💰 Wallet balance</div>
+              <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{fmt(walletBalance)} available</div>
+              {!walletEnough && <div style={{ fontSize:10, color:"#E24B4A", marginTop:2 }}>Not enough balance</div>}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPayWith("mobile")}
+              style={{
+                textAlign:"left", padding:"12px 14px", borderRadius:12, cursor:"pointer",
+                border: payWith === "mobile" ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
+                background: payWith === "mobile" ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+              }}
+            >
+              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>📱 Mobile money</div>
+              <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Pay a new deposit now</div>
+            </button>
           </div>
 
-          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient }} onClick={handleSubmit} disabled={loading}>
-            {loading ? "Sending prompt..." : `Pay ${fmt(amountNum)} & activate →`}
+          {payWith === "mobile" && (
+            <>
+              <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Mobile money number</label>
+              <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:8 }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
+              <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5", marginBottom:16 }}>
+                📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
+              </div>
+            </>
+          )}
+
+          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient, opacity: (payWith === "wallet" && !walletEnough) ? 0.6 : 1 }} onClick={handleSubmit} disabled={loading || (payWith === "wallet" && !walletEnough)}>
+            {loading
+              ? (payWith === "wallet" ? "Activating..." : "Sending prompt...")
+              : (payWith === "wallet" ? `Pay ${fmt(amountNum)} from wallet & activate →` : `Pay ${fmt(amountNum)} & activate →`)}
           </button>
           <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:10, lineHeight:1.6 }}>
-            Your {fmt(amountNum)} is locked for {fmtDuration()}. Principal + {fmt(totalProfit)} profit, plus any task earnings made while this plan is active, are paid out together at maturity.
+            {payWith === "wallet"
+              ? `${fmt(amountNum)} will be deducted from your wallet balance and locked for ${fmtDuration()}. Principal + ${fmt(totalProfit)} profit, plus any task earnings made while this plan is active, are paid out together at maturity.`
+              : `Your ${fmt(amountNum)} is locked for ${fmtDuration()}. Principal + ${fmt(totalProfit)} profit, plus any task earnings made while this plan is active, are paid out together at maturity.`}
           </p>
         </div>
       </div>
