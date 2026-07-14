@@ -14,8 +14,17 @@ function AdminLogin({ onLogin }) {
   const handleLogin = async () => {
     setErr(""); setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password: pwd });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password: pwd });
       if (error) throw error;
+      const { data: profile, error: profErr } = await supabase
+        .from("profiles")
+        .select("is_admin")
+        .eq("id", data.user.id)
+        .single();
+      if (profErr || !profile?.is_admin) {
+        await supabase.auth.signOut();
+        throw new Error("This account doesn't have admin access.");
+      }
       onLogin();
     } catch (e) { setErr(e.message); }
     finally { setLoading(false); }
@@ -59,12 +68,21 @@ export default function AdminApp() {
   const [toast, setToast]       = useState(null);
   const [userSearch, setUserSearch] = useState("");
   const [taskModal, setTaskModal] = useState(false);
-  const [planModal, setPlanModal] = useState(null); // null | plan object | "new"
   const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setAuthed(true);
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("is_admin")
+        .eq("id", session.user.id)
+        .single();
+      if (profile?.is_admin) {
+        setAuthed(true);
+      } else {
+        await supabase.auth.signOut();
+      }
     });
   }, []);
 
@@ -96,9 +114,9 @@ export default function AdminApp() {
       .order("created_at", { ascending: false });
     setInvestments(invData ?? []);
     const { data: planData } = await supabase
-      .from("investment_plans")
+      .from("vault_plans")
       .select("*")
-      .order("sort_order");
+      .order("level");
     setInvPlans(planData ?? []);
   }
 
@@ -143,34 +161,6 @@ export default function AdminApp() {
     const totalInvested      = (invActive.data ?? []).reduce((s, t) => s + t.amount, 0);
     setStats({ totalUsers: totalUsers ?? 0, activeToday: activeToday ?? 0, totalPaidOut, pendingWithdrawals, totalInvested });
   }
-
-  const handlePlanSave = async (planData) => {
-    try {
-      const payload = {
-        name:            planData.name,
-        icon:            planData.icon || "🌱",
-        duration_months: null, // plans are duration-free — lockup is chosen by the user at purchase
-        min_amount:      parseInt(planData.min_amount),
-        rate_percent:    Math.min(7, parseFloat(planData.rate_percent)), // hard cap 7%/month
-        vip_tier:        planData.vip_tier,
-        task_limit:      planData.task_limit === "" ? null : parseInt(planData.task_limit),
-        multiplier:      parseFloat(planData.multiplier || 1.1),
-        is_active:       planData.is_active,
-      };
-      if (planData.id) {
-        await supabase.from("investment_plans").update(payload).eq("id", planData.id);
-      } else {
-        if (invPlans.length >= 10) {
-          showToast("Max 10 plans allowed — pause or edit an existing one", "error");
-          return;
-        }
-        await supabase.from("investment_plans").insert({ ...payload, sort_order: invPlans.length + 1 });
-      }
-      showToast("Plan saved ✓");
-      setPlanModal(null);
-      loadInvestments();
-    } catch (e) { showToast(e.message ?? "Save failed", "error"); }
-  };
 
   const handleApprove = async (id) => {
     try {
@@ -303,7 +293,7 @@ export default function AdminApp() {
               {tab === "users"       && <UsersTab users={filteredUsers} search={userSearch} setSearch={setUserSearch} onSuspend={handleSuspendUser} />}
               {tab === "withdrawals" && <WithdrawalsTab withdrawals={withdrawals} onApprove={handleApprove} onReject={handleReject} />}
               {tab === "tasks"       && <TasksTab tasks={tasks} onToggle={handleToggleTask} onCreate={() => setTaskModal(true)} />}
-              {tab === "grow"        && <GrowAdminTab investments={investments} plans={invPlans} onEditPlan={setPlanModal} onNewPlan={() => setPlanModal("new")} onRefresh={loadInvestments} />}
+              {tab === "grow"        && <GrowAdminTab investments={investments} plans={invPlans} />}
               {tab === "businesses"  && <BusinessesTab businesses={businesses} onVerify={handleVerifyBusiness} />}
               {tab === "settings"    && <SettingsTab settings={settings} onSave={handleSaveSettings} />}
             </>
@@ -314,14 +304,6 @@ export default function AdminApp() {
       {taskModal && (
         <CreateTaskModal onClose={() => setTaskModal(false)} onCreate={handleCreateTask}
           businesses={businesses.filter(b => b.verified)} />
-      )}
-
-      {planModal && (
-        <PlanModal
-          plan={planModal === "new" ? null : planModal}
-          onClose={() => setPlanModal(null)}
-          onSave={handlePlanSave}
-        />
       )}
 
       {toast && <div style={{ ...A.toast, background: toast.type === "error" ? "#E24B4A" : "#1D9E75" }}>{toast.msg}</div>}
@@ -775,19 +757,21 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
 }
 
 // ── Grow / Investment Admin Tab ───────────────────────────────
-const VIP_COLORS = { silver:"#1D9E75", gold:"#185FA5", platinum:"#7B61FF", legend:"#B8860B" };
+// Fixed color bucketing across the 16-tier ladder — purely visual,
+// doesn't touch the DB (there's no vip_tier column in this schema).
+const tierColor = (level) => level <= 4 ? "#1D9E75" : level <= 8 ? "#185FA5" : level <= 12 ? "#7B61FF" : "#B8860B";
 
-function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) {
+function GrowAdminTab({ investments, plans }) {
   const [filter, setFilter] = useState("all"); // all | active | paid_out
   const [search, setSearch] = useState("");
 
-  const activeInvs  = investments.filter(i => i.status === "active");
-  const totalInvested = activeInvs.reduce((s, i) => s + i.amount, 0);
-  const totalProfit   = activeInvs.reduce((s, i) => s + (i.expected_profit ?? 0), 0);
+  const activeInvs     = investments.filter(i => i.status === "active");
+  const totalInvested  = activeInvs.reduce((s, i) => s + i.amount, 0);
+  const totalProfit    = activeInvs.reduce((s, i) => s + (i.expected_profit ?? 0), 0);
 
-  // Per-plan investor counts
+  // Per-plan investor counts — matched by plan_level (stable FK), not name
   const planCounts = plans.reduce((acc, p) => {
-    acc[p.name] = investments.filter(i => i.plan_name === p.name && i.status === "active").length;
+    acc[p.level] = investments.filter(i => i.plan_level === p.level && i.status === "active").length;
     return acc;
   }, {});
 
@@ -822,51 +806,50 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
         ))}
       </div>
 
-      {/* ── Plan management ── */}
+      {/* ── Vault plan ladder (read-only) ── */}
       <div style={A.card}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-          <div style={{ ...A.cardTitle }}>Investment Plans</div>
-          <button style={A.primaryBtn} onClick={onNewPlan}>+ New Plan</button>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+          <div style={{ ...A.cardTitle }}>Vault Plans (16-tier ladder)</div>
+        </div>
+        <div style={{ fontSize:11, color:"#888", marginBottom:16 }}>
+          Fixed tiers — not editable here. To change a tier, update both <code>VAULT_PLANS</code> in EarnNet.jsx and the matching row in the <code>vault_plans</code> table so the displayed price always matches what the RPC actually charges.
         </div>
         <table style={A.table}>
           <thead>
             <tr style={{ borderBottom:"1px solid #f0f0f0" }}>
-              {["Plan","Minimum","Monthly rate","3mo profit on min","Investors","Status","Actions"].map(h => (
+              {["Plan","Price","Monthly rate","Daily tasks","Task reward","30-day profit","Active investors"].map(h => (
                 <th key={h} style={A.th}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {plans.map(p => {
-              const profit = Math.floor(p.min_amount * p.rate_percent / 100 * 3);
-              const color  = VIP_COLORS[p.vip_tier] ?? "#888";
+              const profit = Math.floor(p.amount * p.rate_percent / 100);
+              const color  = tierColor(p.level);
               return (
-                <tr key={p.id} style={{ borderBottom:"0.5px solid #f5f5f5" }}>
+                <tr key={p.level} style={{ borderBottom:"0.5px solid #f5f5f5" }}>
                   <td style={A.td}>
                     <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                      <span style={{ fontSize:20 }}>{p.icon ?? "📦"}</span>
+                      <span style={{ fontSize:20 }}>{p.icon}</span>
                       <span style={{ fontWeight:600 }}>{p.name}</span>
                     </div>
                   </td>
-                  <td style={A.td}>{fmt(p.min_amount)}</td>
-                  <td style={A.td}><span style={{ fontWeight:700, color }}>{p.rate_percent}%/mo</span></td>
+                  <td style={A.td}>{fmt(p.amount)}</td>
+                  <td style={A.td}><span style={{ fontWeight:700, color }}>{p.rate_percent}%</span></td>
+                  <td style={A.td}>{p.daily_tasks}</td>
+                  <td style={A.td}>{fmt(p.task_reward)}</td>
                   <td style={A.td}>{fmt(profit)}</td>
                   <td style={A.td}>
                     <span style={{ background:"#E1F5EE", color:"#0F6E56", borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:600 }}>
-                      {planCounts[p.name] ?? 0} active
+                      {planCounts[p.level] ?? 0} active
                     </span>
-                  </td>
-                  <td style={A.td}>
-                    <span style={{ background: p.is_active ? "#E1F5EE" : "#FAECE7", color: p.is_active ? "#0F6E56" : "#993C1D", borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:600 }}>
-                      {p.is_active ? "Active" : "Paused"}
-                    </span>
-                  </td>
-                  <td style={A.td}>
-                    <button style={A.actionBtn} onClick={() => onEditPlan(p)}>Edit</button>
                   </td>
                 </tr>
               );
             })}
+            {plans.length === 0 && (
+              <tr><td colSpan={7} style={{ padding:30, textAlign:"center", color:"#aaa", fontSize:13 }}>No vault plans found — run the vault_plans seed migration.</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -900,7 +883,7 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
                 const profit   = inv.expected_profit ?? 0;
                 const daysLeft = Math.max(0, Math.ceil((new Date(inv.ends_at) - new Date()) / 86400000));
                 const isSoon   = daysLeft <= 3 && inv.status === "active";
-                const color    = VIP_COLORS[inv.vip_tier] ?? "#888";
+                const color    = tierColor(inv.plan_level ?? 1);
                 return (
                   <tr key={inv.id} style={{ borderBottom:"0.5px solid #f5f5f5", background: isSoon ? "#FFFBF0" : "white" }}>
                     <td style={A.td}>
@@ -934,109 +917,6 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
             }
           </tbody>
         </table>
-      </div>
-    </div>
-  );
-}
-
-// ── Plan Edit / Create Modal ──────────────────────────────────
-function PlanModal({ plan, onClose, onSave }) {
-  const isNew = !plan;
-  const [form, setForm] = useState({
-    id:              plan?.id ?? null,
-    name:            plan?.name ?? "",
-    icon:            plan?.icon ?? "🌱",
-    min_amount:      plan?.min_amount ?? "",
-    rate_percent:    plan?.rate_percent ?? "",
-    vip_tier:        plan?.vip_tier ?? "silver",
-    task_limit:      plan?.task_limit ?? "",
-    multiplier:      plan?.multiplier ?? 1.1,
-    is_active:       plan?.is_active ?? true,
-  });
-  const [saving, setSaving] = useState(false);
-
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const rateCapped  = form.rate_percent !== "" && parseFloat(form.rate_percent) > 7;
-  const exampleProfit3mo = form.min_amount && form.rate_percent
-    ? Math.floor(parseInt(form.min_amount) * (parseFloat(form.rate_percent) / 100) * 3)
-    : 0;
-
-  const handleSave = async () => {
-    setSaving(true);
-    await onSave(form);
-    setSaving(false);
-  };
-
-  return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300 }} onClick={onClose}>
-      <div style={{ background:"white", borderRadius:20, padding:28, width:460, animation:"slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontWeight:700, fontSize:18, marginBottom:20 }}>{isNew ? "Create Growth Plan" : `Edit ${plan.name} Plan`}</div>
-        <div style={{ fontSize:11, color:"#888", marginBottom:14 }}>Plans are amount-tiers only — the user picks their own lockup (1/3/6/12 months) at checkout. All plans are open for every period.</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-          <div>
-            <label style={A.label}>Plan name</label>
-            <input style={A.input} placeholder="e.g. Bronze" value={form.name} onChange={e => set("name", e.target.value)} />
-          </div>
-          <div>
-            <label style={A.label}>Icon (emoji)</label>
-            <input style={A.input} placeholder="🌱" value={form.icon} onChange={e => set("icon", e.target.value)} />
-          </div>
-          <div>
-            <label style={A.label}>Minimum amount (UGX)</label>
-            <input style={A.input} type="number" placeholder="300000" value={form.min_amount} onChange={e => set("min_amount", e.target.value)} />
-            <div style={{ fontSize:10, color:"#aaa", marginTop:4 }}>Users can invest this amount or more.</div>
-          </div>
-          <div>
-            <label style={A.label}>Monthly rate (%) — max 7</label>
-            <input style={{ ...A.input, borderColor: rateCapped ? "#E24B4A" : "#ddd" }} type="number" min="0" max="7" step="0.5" placeholder="5" value={form.rate_percent} onChange={e => set("rate_percent", e.target.value)} />
-            {rateCapped && <div style={{ fontSize:10, color:"#E24B4A", marginTop:4 }}>Will be capped at 7%/month on save.</div>}
-          </div>
-          <div>
-            <label style={A.label}>VIP tier (task-unlock styling)</label>
-            <select style={A.input} value={form.vip_tier} onChange={e => set("vip_tier", e.target.value)}>
-              <option value="silver">🥈 Silver</option>
-              <option value="gold">🥇 Gold</option>
-              <option value="platinum">💎 Platinum</option>
-              <option value="legend">👑 Legend</option>
-            </select>
-          </div>
-          <div>
-            <label style={A.label}>Tasks/day unlocked (blank = unlimited)</label>
-            <input style={A.input} type="number" placeholder="15" value={form.task_limit} onChange={e => set("task_limit", e.target.value)} />
-          </div>
-          <div>
-            <label style={A.label}>Task reward multiplier</label>
-            <input style={A.input} type="number" step="0.05" placeholder="1.20" value={form.multiplier} onChange={e => set("multiplier", e.target.value)} />
-          </div>
-          <div style={{ display:"flex", alignItems:"center", gap:10, paddingTop:8, gridColumn:"1/-1" }}>
-            <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => set("is_active", e.target.checked)} style={{ width:16, height:16 }} />
-            <label htmlFor="is_active" style={{ fontSize:13, fontWeight:500 }}>Plan is active (visible to users)</label>
-          </div>
-        </div>
-
-        {exampleProfit3mo > 0 && (
-          <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px 16px", marginTop:16 }}>
-            <div style={{ fontSize:12, color:"#0F6E56", marginBottom:4 }}>Preview — minimum amount, 3-month lockup (user can pick 1/3/6/12mo)</div>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
-              <span>User invests</span><strong>{fmt(form.min_amount)}</strong>
-            </div>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginTop:4 }}>
-              <span>Profit after 3 months</span><strong style={{ color:"#0F6E56" }}>+{fmt(exampleProfit3mo)}</strong>
-            </div>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginTop:4, borderTop:"0.5px solid #b2dfdb", paddingTop:6 }}>
-              <span>Total payout</span><strong>{fmt(parseInt(form.min_amount || 0) + exampleProfit3mo)}</strong>
-            </div>
-          </div>
-        )}
-
-        <div style={{ display:"flex", gap:10, marginTop:20 }}>
-          <button style={{ ...A.primaryBtn, flex:1, padding:"12px 0", opacity: saving ? 0.7 : 1 }} onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : isNew ? "Create Plan" : "Save Changes"}
-          </button>
-          <button style={{ flex:1, padding:"12px 0", background:"transparent", border:"0.5px solid #ddd", borderRadius:10, cursor:"pointer", fontSize:14 }} onClick={onClose}>
-            Cancel
-          </button>
-        </div>
       </div>
     </div>
   );
