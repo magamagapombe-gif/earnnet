@@ -2542,7 +2542,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
     // Payment confirmed — now activate the plan in DB
     try {
-      await buyInvestmentPlan(userId, plan.level, amountNum, duration);
+      await buyInvestmentPlan(userId, plan.level);
       setStep("success");
       await onSuccess();
     } catch (e) {
@@ -2560,7 +2560,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
       if (!walletEnough) return setErr("Your wallet balance is too low for this plan");
       setLoading(true);
       try {
-        await buyInvestmentPlan(userId, plan.level, amountNum, duration);
+        await buyInvestmentPlan(userId, plan.level);
         setStep("success");
         await onSuccess();
       } catch (e) {
@@ -2752,7 +2752,7 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
     if (amountNum > payoutAvailable) return setErr("Amount exceeds your available matured balance");
     setLoading(true);
     try {
-      await reinvestFromBalance(userId, selectedPlan.level, amountNum, selectedPlan.durationDays);
+      await reinvestFromBalance(userId, selectedPlan.level);
       await onSuccess();
     } catch (e) {
       setErr(e.message ?? "Reinvestment failed");

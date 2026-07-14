@@ -296,13 +296,15 @@ export async function adminDiscreditTask(completionId) {
 
 // ── Investment Plans ───────────────────────────────────────────
 
-/** Fetch all active investment plan definitions */
+/** Fetch all vault plan tiers (server-side source of truth).
+ *  Not currently used by EarnNet.jsx — the UI keeps its own
+ *  VAULT_PLANS ladder for instant rendering — but kept in sync
+ *  with the `vault_plans` table for admin tooling / future use. */
 export async function getInvestmentPlans() {
   const { data, error } = await supabase
-    .from("investment_plans")
+    .from("vault_plans")
     .select("*")
-    .eq("is_active", true)
-    .order("sort_order");
+    .order("level");
   if (error) throw error;
   return data ?? [];
 }
@@ -322,51 +324,36 @@ export async function getUserInvestments(userId) {
 }
 
 /**
- * Buy a growth plan: pick an amount-tier (>= plan.min_amount) and a
- * lockup duration (1, 3, 6 or 12 months) — the plan's monthly rate
- * is fixed, but total profit = amount × rate × months.
- * The LivePay deposit must be confirmed BEFORE calling this —
- * call it in the same polling-success callback you use for deposits.
- * Pays 2-level referral commission out of `amount` server-side.
+ * Buy a vault plan tier. Amount, task reward, and duration are all
+ * fixed per level and looked up server-side from `vault_plans` — the
+ * RPC never trusts a client-supplied amount/duration, so only the
+ * level is sent. The LivePay deposit (if paying by mobile money)
+ * must already be confirmed and sitting in the user's balance BEFORE
+ * calling this — call it in the same polling-success callback you
+ * use for deposits. Pays 2-level referral commission out of the
+ * plan's amount server-side.
  */
-export async function buyInvestmentPlan(userId, planId, amount, durationMonths) {
-  const { data, error } = await supabase.rpc("buy_investment_plan", {
-    p_user_id:         userId,
-    p_plan_id:         planId,
-    p_amount:          amount,
-    p_duration_months: durationMonths,
+export async function buyInvestmentPlan(userId, planLevel) {
+  const { data, error } = await supabase.rpc("buy_vault_plan", {
+    p_user_id:    userId,
+    p_plan_level: planLevel,
   });
   if (error) throw error;
   return data;
 }
 
 /**
- * Reinvest: start a new plan using existing balance (e.g. a matured
- * payout) instead of a fresh mobile-money payment. No referral
- * commission is paid — it isn't new external money.
+ * Reinvest: start a new plan tier using existing balance (e.g. a
+ * matured payout) instead of a fresh mobile-money payment. No
+ * referral commission is paid — it isn't new external money.
  */
-export async function reinvestFromBalance(userId, planId, amount, durationMonths) {
-  const { data, error } = await supabase.rpc("reinvest_balance", {
-    p_user_id:         userId,
-    p_plan_id:         planId,
-    p_amount:          amount,
-    p_duration_months: durationMonths,
+export async function reinvestFromBalance(userId, planLevel) {
+  const { data, error } = await supabase.rpc("reinvest_from_balance", {
+    p_user_id:    userId,
+    p_plan_level: planLevel,
   });
   if (error) throw error;
   return data;
-}
-
-/**
- * Extend an active (not yet matured) investment's lockup by N more
- * months. Profit is recalculated for the new total duration.
- */
-export async function extendInvestment(userId, investmentId, additionalMonths) {
-  const { error } = await supabase.rpc("extend_investment", {
-    p_user_id:           userId,
-    p_investment_id:     investmentId,
-    p_additional_months: additionalMonths,
-  });
-  if (error) throw error;
 }
 
 /**
