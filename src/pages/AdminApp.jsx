@@ -149,9 +149,9 @@ export default function AdminApp() {
       const payload = {
         name:            planData.name,
         icon:            planData.icon || "🌱",
-        duration_months: parseInt(planData.duration_months),
+        duration_months: null, // plans are duration-free — lockup is chosen by the user at purchase
         min_amount:      parseInt(planData.min_amount),
-        rate_percent:    Math.min(10, parseFloat(planData.rate_percent)), // hard cap 10%
+        rate_percent:    Math.min(7, parseFloat(planData.rate_percent)), // hard cap 7%/month
         vip_tier:        planData.vip_tier,
         task_limit:      planData.task_limit === "" ? null : parseInt(planData.task_limit),
         multiplier:      parseFloat(planData.multiplier || 1.1),
@@ -831,14 +831,14 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
         <table style={A.table}>
           <thead>
             <tr style={{ borderBottom:"1px solid #f0f0f0" }}>
-              {["Plan","Minimum","Return","Duration","Profit on min","Investors","Status","Actions"].map(h => (
+              {["Plan","Minimum","Monthly rate","3mo profit on min","Investors","Status","Actions"].map(h => (
                 <th key={h} style={A.th}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {plans.map(p => {
-              const profit = Math.floor(p.min_amount * p.rate_percent / 100);
+              const profit = Math.floor(p.min_amount * p.rate_percent / 100 * 3);
               const color  = VIP_COLORS[p.vip_tier] ?? "#888";
               return (
                 <tr key={p.id} style={{ borderBottom:"0.5px solid #f5f5f5" }}>
@@ -849,8 +849,7 @@ function GrowAdminTab({ investments, plans, onEditPlan, onNewPlan, onRefresh }) 
                     </div>
                   </td>
                   <td style={A.td}>{fmt(p.min_amount)}</td>
-                  <td style={A.td}><span style={{ fontWeight:700, color }}>{p.rate_percent}%</span></td>
-                  <td style={A.td}>{p.duration_months === 1 ? "1 month" : p.duration_months === 12 ? "1 year" : `${p.duration_months} months`}</td>
+                  <td style={A.td}><span style={{ fontWeight:700, color }}>{p.rate_percent}%/mo</span></td>
                   <td style={A.td}>{fmt(profit)}</td>
                   <td style={A.td}>
                     <span style={{ background:"#E1F5EE", color:"#0F6E56", borderRadius:20, padding:"3px 10px", fontSize:12, fontWeight:600 }}>
@@ -949,7 +948,6 @@ function PlanModal({ plan, onClose, onSave }) {
     icon:            plan?.icon ?? "🌱",
     min_amount:      plan?.min_amount ?? "",
     rate_percent:    plan?.rate_percent ?? "",
-    duration_months: plan?.duration_months ?? 1,
     vip_tier:        plan?.vip_tier ?? "silver",
     task_limit:      plan?.task_limit ?? "",
     multiplier:      plan?.multiplier ?? 1.1,
@@ -958,9 +956,9 @@ function PlanModal({ plan, onClose, onSave }) {
   const [saving, setSaving] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const rateCapped  = form.rate_percent !== "" && parseFloat(form.rate_percent) > 10;
-  const exampleProfit = form.min_amount && form.rate_percent
-    ? Math.floor(parseInt(form.min_amount) * (parseFloat(form.rate_percent) / 100))
+  const rateCapped  = form.rate_percent !== "" && parseFloat(form.rate_percent) > 7;
+  const exampleProfit3mo = form.min_amount && form.rate_percent
+    ? Math.floor(parseInt(form.min_amount) * (parseFloat(form.rate_percent) / 100) * 3)
     : 0;
 
   const handleSave = async () => {
@@ -973,6 +971,7 @@ function PlanModal({ plan, onClose, onSave }) {
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300 }} onClick={onClose}>
       <div style={{ background:"white", borderRadius:20, padding:28, width:460, animation:"slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
         <div style={{ fontWeight:700, fontSize:18, marginBottom:20 }}>{isNew ? "Create Growth Plan" : `Edit ${plan.name} Plan`}</div>
+        <div style={{ fontSize:11, color:"#888", marginBottom:14 }}>Plans are amount-tiers only — the user picks their own lockup (1/3/6/12 months) at checkout. All plans are open for every period.</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
           <div>
             <label style={A.label}>Plan name</label>
@@ -985,21 +984,12 @@ function PlanModal({ plan, onClose, onSave }) {
           <div>
             <label style={A.label}>Minimum amount (UGX)</label>
             <input style={A.input} type="number" placeholder="300000" value={form.min_amount} onChange={e => set("min_amount", e.target.value)} />
-            <div style={{ fontSize:10, color:"#aaa", marginTop:4 }}>Users can invest this amount or more. Use 2,000,000+ for 1-year plans.</div>
+            <div style={{ fontSize:10, color:"#aaa", marginTop:4 }}>Users can invest this amount or more.</div>
           </div>
           <div>
-            <label style={A.label}>Return rate (%) — max 10</label>
-            <input style={{ ...A.input, borderColor: rateCapped ? "#E24B4A" : "#ddd" }} type="number" min="0" max="10" step="0.5" placeholder="8" value={form.rate_percent} onChange={e => set("rate_percent", e.target.value)} />
-            {rateCapped && <div style={{ fontSize:10, color:"#E24B4A", marginTop:4 }}>Will be capped at 10% on save.</div>}
-          </div>
-          <div>
-            <label style={A.label}>Period</label>
-            <select style={A.input} value={form.duration_months} onChange={e => set("duration_months", parseInt(e.target.value))}>
-              <option value={1}>1 month</option>
-              <option value={3}>3 months</option>
-              <option value={6}>6 months</option>
-              <option value={12}>1 year</option>
-            </select>
+            <label style={A.label}>Monthly rate (%) — max 7</label>
+            <input style={{ ...A.input, borderColor: rateCapped ? "#E24B4A" : "#ddd" }} type="number" min="0" max="7" step="0.5" placeholder="5" value={form.rate_percent} onChange={e => set("rate_percent", e.target.value)} />
+            {rateCapped && <div style={{ fontSize:10, color:"#E24B4A", marginTop:4 }}>Will be capped at 7%/month on save.</div>}
           </div>
           <div>
             <label style={A.label}>VIP tier (task-unlock styling)</label>
@@ -1024,17 +1014,17 @@ function PlanModal({ plan, onClose, onSave }) {
           </div>
         </div>
 
-        {exampleProfit > 0 && (
+        {exampleProfit3mo > 0 && (
           <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px 16px", marginTop:16 }}>
-            <div style={{ fontSize:12, color:"#0F6E56", marginBottom:4 }}>Preview — on the minimum amount</div>
+            <div style={{ fontSize:12, color:"#0F6E56", marginBottom:4 }}>Preview — minimum amount, 3-month lockup (user can pick 1/3/6/12mo)</div>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
               <span>User invests</span><strong>{fmt(form.min_amount)}</strong>
             </div>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginTop:4 }}>
-              <span>Profit at maturity</span><strong style={{ color:"#0F6E56" }}>+{fmt(exampleProfit)}</strong>
+              <span>Profit after 3 months</span><strong style={{ color:"#0F6E56" }}>+{fmt(exampleProfit3mo)}</strong>
             </div>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginTop:4, borderTop:"0.5px solid #b2dfdb", paddingTop:6 }}>
-              <span>Total payout</span><strong>{fmt(parseInt(form.min_amount || 0) + exampleProfit)}</strong>
+              <span>Total payout</span><strong>{fmt(parseInt(form.min_amount || 0) + exampleProfit3mo)}</strong>
             </div>
           </div>
         )}

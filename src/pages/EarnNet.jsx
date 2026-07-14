@@ -7,6 +7,7 @@ import {
   getReferralTree, getSettings,
   getInvestmentPlans, getUserInvestments, buyInvestmentPlan,
   requestInvestmentPayment, matureUserInvestments,
+  reinvestFromBalance, extendInvestment,
 } from "../lib/supabase";
 
 const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
@@ -479,6 +480,8 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [depositModal, setDepositModal]   = useState(false);
   const [activateModal, setActivateModal] = useState(false);
   const [investModal, setInvestModal]     = useState(null); // plan object or null
+  const [reinvestModal, setReinvestModal] = useState(null); // matured investment or null
+  const [extendModal, setExtendModal]     = useState(null); // active investment or null
   const [selectedTask, setSelectedTask]   = useState(null);
   const [notifOpen, setNotifOpen]         = useState(false);
   const uid = session.user.id;
@@ -538,8 +541,8 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     if (!profile?.activated) { setActivateModal(true); return; }
     try {
       await completeTask(uid, taskId, proofBase64);
-      showToast("Task completed! Balance updated ✓");
-      await Promise.all([loadTasks(), refreshProfile(), loadWallet()]);
+      showToast("Task completed! Earnings locked to your plan 🔒");
+      await Promise.all([loadTasks(), refreshProfile(), loadWallet(), loadInvestments()]);
     } catch (e) { showToast(e.message ?? "Could not complete task", "error"); }
   };
 
@@ -650,7 +653,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       <main style={{ flex:1, overflowY:"auto", paddingTop:4 }}>
         {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} dark={dark} />}
         {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} investments={investments} onGoGrow={() => setTab("grow")} dark={dark} />}
-        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={investPlans} onBuyPlan={setInvestModal} onRefresh={loadInvestments} dark={dark} />}
+        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={investPlans} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onExtend={setExtendModal} onRefresh={loadInvestments} dark={dark} />}
         {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
         {tab === "referral" && <ReferralTab profile={profile} referrals={referrals} settings={settings} dark={dark} />}
         {tab === "profile"  && <ProfileTab  profile={profile} investments={investments} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
@@ -670,6 +673,8 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       {depositModal  && <DepositModal  settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} onClose={() => setDepositModal(false)}  onSubmit={handleDeposit} refreshProfile={refreshProfile} dark={dark} />}
       {activateModal && <ActivateModal settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} profile={profile} onClose={() => setActivateModal(false)} onSubmit={handleActivate} refreshProfile={refreshProfile} dark={dark} />}
       {investModal   && <InvestModal   plan={investModal} profile={profile} userId={uid} investments={investments} onClose={() => setInvestModal(null)} onSuccess={async () => { setInvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Investment activated! Watch your profits grow 🌱"); }} dark={dark} />}
+      {reinvestModal && <ReinvestModal plan={reinvestModal} profile={profile} userId={uid} plans={investPlans} onClose={() => setReinvestModal(null)} onSuccess={async () => { setReinvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Reinvested! Your new plan is growing 🌱"); }} dark={dark} />}
+      {extendModal   && <ExtendModal   investment={extendModal} userId={uid} onClose={() => setExtendModal(null)} onSuccess={async () => { setExtendModal(null); await loadInvestments(); showToast("Lockup extended ✓"); }} dark={dark} />}
       {toast && <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background: toast.type === "error" ? "#E24B4A" : BRAND, color:"white", padding:"12px 24px", borderRadius:14, fontSize:13, fontWeight:500, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.25)", animation:"slideUp 0.3s ease", whiteSpace:"nowrap" }}>{toast.msg}</div>}
 
       {/* Close notif on outside click */}
@@ -2209,7 +2214,7 @@ function useLiveProfitCounter(investment) {
 }
 
 // ── Grow Tab ───────────────────────────────────────────────────
-function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
+function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onExtend, onRefresh, dark }) {
   const T           = theme(dark);
   const activeInvs  = investments.filter(i => i.status === "active");
   const historyInvs = investments.filter(i => i.status === "paid_out");
@@ -2219,7 +2224,10 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
   const tierInfo = getActiveTier(investments);
   const vipInfo  = tierInfo ? VIP_TIERS[tierInfo.vip_tier] : null;
 
-  // Total live profit ticker across all active investments
+  const totalLocked = activeInvs.reduce((s, i) => s + (i.locked_task_earnings ?? 0), 0);
+
+  // Total live profit ticker across all active investments (principal growth only —
+  // locked task earnings are added in discrete chunks as tasks complete, shown separately)
   const [displayProfit, setDisplayProfit] = useState(0);
   useEffect(() => {
     const calc = () => activeInvs.reduce((sum, inv) => {
@@ -2235,14 +2243,6 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
     return () => clearInterval(id);
   }, [investments]);
 
-  // Group buyable plans by period for display
-  const periods = [1, 3, 6, 12];
-  const plansByPeriod = periods.map(m => ({
-    months: m,
-    label: fmtDuration(m),
-    items: plans.filter(p => p.duration_months === m),
-  })).filter(g => g.items.length > 0);
-
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:100 }}>
 
@@ -2252,13 +2252,22 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
         boxShadow:"0 8px 32px rgba(15,46,34,0.4)", position:"relative", overflow:"hidden" }}>
         <div style={{ position:"absolute", right:-30, top:-30, width:130, height:130, borderRadius:"50%", background:"rgba(255,255,255,0.05)" }} />
         <div style={{ position:"absolute", right:20, bottom:-40, width:100, height:100, borderRadius:"50%", background:"rgba(255,255,255,0.04)" }} />
-        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>Total profit growing</div>
+        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>Investment profit growing</div>
         <div style={{ fontFamily:"'Sora',sans-serif", fontSize:42, fontWeight:700, letterSpacing:-1, marginBottom:4 }}>
           {fmt(displayProfit)}
         </div>
-        <div style={{ fontSize:12, opacity:0.65, marginBottom:20 }}>
+        <div style={{ fontSize:12, opacity:0.65, marginBottom:14 }}>
           Across {activeInvs.length} active plan{activeInvs.length !== 1 ? "s" : ""} · updates every second
         </div>
+        {totalLocked > 0 && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.10)", borderRadius:12, padding:"10px 14px", marginBottom:16 }}>
+            <span style={{ fontSize:16 }}>🔒</span>
+            <div>
+              <div style={{ fontSize:13, fontWeight:700 }}>{fmt(totalLocked)} in locked task earnings</div>
+              <div style={{ fontSize:10, opacity:0.75 }}>Released to your balance when each plan matures</div>
+            </div>
+          </div>
+        )}
         {/* Active tier badge */}
         {vipInfo ? (
           <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.12)", borderRadius:12, padding:"8px 14px" }}>
@@ -2291,114 +2300,119 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
             </div>
           ))}
         </div>
+        <div style={{ fontSize:11, color:T.textSub, marginTop:12, lineHeight:1.5 }}>
+          💡 Task earnings are locked while a plan is active — they're paid out together with your principal and profit when that plan matures.
+        </div>
       </div>
 
       {/* ── Active investments ── */}
       {activeInvs.length > 0 && (
         <div style={{ padding:"0 16px", marginBottom:16 }}>
           <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📈 Your active investments</div>
-          {activeInvs.map(inv => <ActiveInvestmentCard key={inv.id} investment={inv} dark={dark} />)}
+          {activeInvs.map(inv => <ActiveInvestmentCard key={inv.id} investment={inv} onExtend={() => onExtend(inv)} dark={dark} />)}
         </div>
       )}
 
-      {/* ── Plans to buy, grouped by period ── */}
+      {/* ── Rate ladder — pick an amount tier, then choose your lockup at checkout ── */}
       <div style={{ padding:"0 16px", marginBottom:16 }}>
         <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:4 }}>Growth Plans</div>
         <div style={{ fontSize:12, color:T.textSub, marginBottom:14 }}>
-          Pick a period, enter any amount at or above the minimum, and watch it grow.
+          The more you invest, the higher your monthly rate (up to 7%). Every plan is open for any lockup period — 1, 3, 6, or 12 months, your choice at checkout.
         </div>
-        {plansByPeriod.map(group => (
-          <div key={group.months} style={{ marginBottom:18 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:T.textSub, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8 }}>
-              {group.label}
-            </div>
-            {group.items.map(plan => {
-              const vt         = VIP_TIERS[plan.vip_tier] ?? VIP_TIERS.silver;
-              const isLegend   = plan.vip_tier === "legend";
-              const exampleProfit = Math.floor(plan.min_amount * plan.rate_percent / 100);
+        {plans.map(plan => {
+          const vt         = VIP_TIERS[plan.vip_tier] ?? VIP_TIERS.silver;
+          const isTop      = plan.vip_tier === "legend";
+          const exampleProfit3mo = Math.floor(plan.min_amount * plan.rate_percent / 100 * 3);
 
-              return (
-                <div key={plan.id} style={{
-                  background: isLegend ? "linear-gradient(135deg,#1a1000,#2d1f00)" : T.card,
-                  borderRadius:18, marginBottom:14, overflow:"hidden",
-                  boxShadow: isLegend ? "0 8px 32px rgba(184,134,11,0.25)" : "0 4px 16px rgba(0,0,0,0.08)",
-                  border: isLegend ? "1.5px solid #B8860B" : `0.5px solid ${T.border}`,
-                }}>
-                  {/* Plan header */}
-                  <div style={{ background:vt.gradient, padding:"18px 20px", color:"white" }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                      <div>
-                        {isLegend && <div style={{ fontSize:10, fontWeight:700, background:"rgba(255,215,0,0.25)", borderRadius:20, padding:"2px 10px", display:"inline-block", marginBottom:6, letterSpacing:"0.08em" }}>👑 MOST POWERFUL</div>}
-                        <div style={{ fontSize:30, marginBottom:4 }}>{plan.icon}</div>
-                        <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
-                        <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                          {plan.rate_percent}% return · {fmtDuration(plan.duration_months)}
-                        </div>
-                      </div>
-                      <div style={{ textAlign:"right" }}>
-                        <div style={{ fontSize:11, opacity:0.75 }}>Minimum</div>
-                        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:20, fontWeight:700 }}>{fmt(plan.min_amount)}</div>
-                      </div>
+          return (
+            <div key={plan.id} style={{
+              background: isTop ? "linear-gradient(135deg,#1a1000,#2d1f00)" : T.card,
+              borderRadius:18, marginBottom:14, overflow:"hidden",
+              boxShadow: isTop ? "0 8px 32px rgba(184,134,11,0.25)" : "0 4px 16px rgba(0,0,0,0.08)",
+              border: isTop ? "1.5px solid #B8860B" : `0.5px solid ${T.border}`,
+            }}>
+              {/* Plan header */}
+              <div style={{ background:vt.gradient, padding:"18px 20px", color:"white" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                  <div>
+                    {isTop && <div style={{ fontSize:10, fontWeight:700, background:"rgba(255,215,0,0.25)", borderRadius:20, padding:"2px 10px", display:"inline-block", marginBottom:6, letterSpacing:"0.08em" }}>👑 TOP TIER</div>}
+                    <div style={{ fontSize:30, marginBottom:4 }}>{plan.icon}</div>
+                    <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
+                    <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
+                      {plan.rate_percent}% per month · any lockup
                     </div>
                   </div>
-
-                  {/* Plan stats */}
-                  <div style={{ padding:"14px 18px" }}>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
-                      {[
-                        ["Min amount", fmt(plan.min_amount)],
-                        [`Profit on min`, fmt(exampleProfit)],
-                        ["Tasks/day", plan.task_limit === null ? "∞ 👑" : String(plan.task_limit)],
-                        ["Boost",     `×${Number(plan.multiplier).toFixed(2)}`],
-                      ].map(([lbl, val]) => (
-                        <div key={lbl} style={{ textAlign:"center", background: isLegend ? "rgba(184,134,11,0.12)" : (dark ? "#142e20" : "#f7faf9"), borderRadius:10, padding:"10px 4px" }}>
-                          <div style={{ fontSize:9, color: isLegend ? "#B8860B" : T.textSub, marginBottom:3 }}>{lbl}</div>
-                          <div style={{ fontWeight:700, fontSize:12, color: isLegend ? "#FFD700" : T.text }}>{val}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {isLegend && (
-                      <div style={{ background:"rgba(184,134,11,0.15)", borderRadius:10, padding:"10px 14px", marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
-                        <span style={{ fontSize:18 }}>👑</span>
-                        <div>
-                          <div style={{ fontSize:12, fontWeight:700, color:"#FFD700" }}>Exclusive Legend Tasks</div>
-                          <div style={{ fontSize:11, color:"#B8860B", marginTop:2 }}>High-paying tasks only Legend members can see</div>
-                        </div>
-                      </div>
-                    )}
-
-                    <button
-                      style={{ ...S.primaryBtn, background:vt.gradient, padding:"12px 0", fontSize:14, fontWeight:700 }}
-                      onClick={() => onBuyPlan(plan)}
-                    >
-                      Invest from {fmt(plan.min_amount)} →
-                    </button>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:11, opacity:0.75 }}>Minimum</div>
+                    <div style={{ fontFamily:"'Sora',sans-serif", fontSize:20, fontWeight:700 }}>{fmt(plan.min_amount)}</div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        ))}
+              </div>
+
+              {/* Plan stats */}
+              <div style={{ padding:"14px 18px" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
+                  {[
+                    ["Min amount", fmt(plan.min_amount)],
+                    [`3mo profit on min`, fmt(exampleProfit3mo)],
+                    ["Tasks/day", plan.task_limit === null ? "∞ 👑" : String(plan.task_limit)],
+                    ["Boost",     `×${Number(plan.multiplier).toFixed(2)}`],
+                  ].map(([lbl, val]) => (
+                    <div key={lbl} style={{ textAlign:"center", background: isTop ? "rgba(184,134,11,0.12)" : (dark ? "#142e20" : "#f7faf9"), borderRadius:10, padding:"10px 4px" }}>
+                      <div style={{ fontSize:9, color: isTop ? "#B8860B" : T.textSub, marginBottom:3 }}>{lbl}</div>
+                      <div style={{ fontWeight:700, fontSize:12, color: isTop ? "#FFD700" : T.text }}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {isTop && (
+                  <div style={{ background:"rgba(184,134,11,0.15)", borderRadius:10, padding:"10px 14px", marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontSize:18 }}>👑</span>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700, color:"#FFD700" }}>Exclusive Legend Tasks</div>
+                      <div style={{ fontSize:11, color:"#B8860B", marginTop:2 }}>High-paying tasks only top-tier members can see</div>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  style={{ ...S.primaryBtn, background:vt.gradient, padding:"12px 0", fontSize:14, fontWeight:700 }}
+                  onClick={() => onBuyPlan(plan)}
+                >
+                  Invest from {fmt(plan.min_amount)} →
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* ── Investment history ── */}
       {historyInvs.length > 0 && (
         <div style={{ padding:"0 16px", marginBottom:20 }}>
-          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📜 History</div>
+          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📜 Matured plans</div>
           {historyInvs.map(inv => {
             const vt = VIP_TIERS[inv.vip_tier] ?? VIP_TIERS.silver;
+            const payout = inv.expected_total + (inv.locked_task_earnings ?? 0);
             return (
-              <div key={inv.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", alignItems:"center", gap:12 }}>
-                <div style={{ width:40, height:40, borderRadius:12, background:vt.gradient, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{inv.plan_icon}</div>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{inv.plan_name} Plan</div>
-                  <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Matured {new Date(inv.credited_at ?? inv.ends_at).toLocaleDateString()}</div>
+              <div key={inv.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+                  <div style={{ width:40, height:40, borderRadius:12, background:vt.gradient, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{inv.plan_icon}</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{inv.plan_name} Plan</div>
+                    <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Matured {new Date(inv.credited_at ?? inv.ends_at).toLocaleDateString()}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:14 }}>+{fmt(payout - inv.amount)}</div>
+                    <div style={{ fontSize:10, color:T.textSub }}>total profit</div>
+                  </div>
                 </div>
-                <div style={{ textAlign:"right" }}>
-                  <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:14 }}>+{fmt(inv.expected_profit)}</div>
-                  <div style={{ fontSize:10, color:T.textSub }}>profit</div>
-                </div>
+                <button
+                  style={{ width:"100%", background: dark ? "#142e20" : "#f0faf6", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"9px 0", fontSize:12, fontWeight:700, color:BRAND_DARK, cursor:"pointer" }}
+                  onClick={() => onReinvest(inv)}
+                >
+                  🔁 Reinvest {fmt(payout)}
+                </button>
               </div>
             );
           })}
@@ -2409,12 +2423,13 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onRefresh, dark }) {
 }
 
 // ── Active Investment Card (with live ticking profit) ──────────
-function ActiveInvestmentCard({ investment: inv, dark }) {
+function ActiveInvestmentCard({ investment: inv, onExtend, dark }) {
   const T           = theme(dark);
   const vt          = VIP_TIERS[inv.vip_tier] ?? VIP_TIERS.silver;
   const liveProfit  = useLiveProfitCounter(inv);
   const totalProfit = inv.expected_profit;
   const pct         = totalProfit > 0 ? Math.min(100, Math.round((liveProfit / totalProfit) * 100)) : 0;
+  const locked      = inv.locked_task_earnings ?? 0;
 
   const endsAt   = new Date(inv.ends_at);
   const now      = new Date();
@@ -2429,7 +2444,7 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
           <span style={{ fontSize:24 }}>{inv.plan_icon}</span>
           <div>
             <div style={{ fontWeight:700, fontSize:16 }}>{inv.plan_name} Plan</div>
-            <div style={{ fontSize:11, opacity:0.8 }}>{inv.rate_percent}% return · {fmtDuration(inv.duration_months)}</div>
+            <div style={{ fontSize:11, opacity:0.8 }}>{inv.rate_percent}%/month · {fmtDuration(inv.duration_months)} lockup</div>
           </div>
         </div>
         <div style={{ textAlign:"right" }}>
@@ -2442,7 +2457,7 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
         {/* Live profit counter */}
         <div style={{ textAlign:"center", marginBottom:14, background: dark ? "#142e20" : "#f0faf6", borderRadius:14, padding:"14px" }}>
           <div style={{ fontSize:10, color:T.textSub, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>
-            Profit earned so far
+            Investment profit earned so far
           </div>
           <div style={{ fontFamily:"'Sora',sans-serif", fontSize:32, fontWeight:700, color:BRAND_DARK, letterSpacing:-1 }}>
             {fmt(liveProfit)}
@@ -2451,6 +2466,15 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
             of {fmt(totalProfit)} total · ticking up every second
           </div>
         </div>
+
+        {locked > 0 && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, background: dark ? "#2a2410" : "#FFF8E1", borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
+            <span style={{ fontSize:16 }}>🔒</span>
+            <div style={{ fontSize:12, color: dark ? "#FFD700" : "#7A5000" }}>
+              <strong>{fmt(locked)}</strong> in task earnings locked to this plan — released at maturity
+            </div>
+          </div>
+        )}
 
         {/* Progress bar */}
         <div style={{ marginBottom:10 }}>
@@ -2463,10 +2487,17 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
           </div>
         </div>
 
-        <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.textSub }}>
+        <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.textSub, marginBottom:12 }}>
           <span>Started {new Date(inv.starts_at).toLocaleDateString()}</span>
           <span>Matures {new Date(inv.ends_at).toLocaleDateString()}</span>
         </div>
+
+        <button
+          style={{ width:"100%", background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"9px 0", fontSize:12, fontWeight:700, color:T.text, cursor:"pointer" }}
+          onClick={onExtend}
+        >
+          ⏳ Extend lockup period
+        </button>
       </div>
     </div>
   );
@@ -2477,6 +2508,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const T           = theme(dark);
   const vt           = VIP_TIERS[plan.vip_tier] ?? VIP_TIERS.silver;
   const [amount, setAmount]   = useState(String(plan.min_amount));
+  const [duration, setDuration] = useState(3); // months — user picks lockup
   const [phone, setPhone]     = useState(profile?.phone ?? "");
   const [method, setMethod]   = useState(detectMethod(profile?.phone));
   const [loading, setLoading] = useState(false);
@@ -2485,7 +2517,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
 
   const amountNum   = parseInt(amount, 10) || 0;
   const amountValid = amountNum >= plan.min_amount;
-  const totalProfit = Math.floor(amountNum * plan.rate_percent / 100);
+  const totalProfit = Math.floor(amountNum * plan.rate_percent / 100 * duration);
 
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
@@ -2493,7 +2525,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
     // Payment confirmed — now activate the plan in DB
     try {
-      await buyInvestmentPlan(userId, plan.id, amountNum);
+      await buyInvestmentPlan(userId, plan.id, amountNum, duration);
       setStep("success");
       await onSuccess();
     } catch (e) {
@@ -2531,7 +2563,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px", marginBottom:24 }}>
             <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Expected profit at maturity</div>
             <div style={{ fontFamily:"'Sora',sans-serif", fontSize:28, fontWeight:700, color:BRAND_DARK }}>{fmt(totalProfit)}</div>
-            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>in {fmtDuration(plan.duration_months)}</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>in {fmtDuration(duration)}</div>
           </div>
           <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px", background:vt.gradient }} onClick={onClose}>
             Watch it grow →
@@ -2579,7 +2611,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
                 {plan.name} Plan
               </div>
               <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                {plan.rate_percent}% return · {fmtDuration(plan.duration_months)}
+                {plan.rate_percent}% per month
               </div>
             </div>
             <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
@@ -2592,13 +2624,28 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Amount to invest (min {fmt(plan.min_amount)})</label>
           <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${amountValid ? T.inputBrd : "#E24B4A"}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:14 }} type="number" min={plan.min_amount} placeholder={String(plan.min_amount)} value={amount} onChange={e => setAmount(e.target.value)} />
 
+          <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Lockup period</label>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:14 }}>
+            {[1, 3, 6, 12].map(m => (
+              <button key={m} onClick={() => setDuration(m)}
+                style={{
+                  padding:"10px 0", borderRadius:10, fontSize:12, fontWeight:700, cursor:"pointer",
+                  border: duration === m ? "none" : `0.5px solid ${T.border}`,
+                  background: duration === m ? vt.gradient : "transparent",
+                  color: duration === m ? "white" : T.text,
+                }}>
+                {fmtDuration(m)}
+              </button>
+            ))}
+          </div>
+
           {/* Summary cards */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
             {[
               ["You pay", fmt(amountNum)],
               ["You earn", fmt(totalProfit)],
-              ["Duration", fmtDuration(plan.duration_months)],
-              ["Return rate", `${plan.rate_percent}%`],
+              ["Lockup", fmtDuration(duration)],
+              ["Monthly rate", `${plan.rate_percent}%`],
             ].map(([lbl, val]) => (
               <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
@@ -2617,9 +2664,184 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
             {loading ? "Sending prompt..." : `Pay ${fmt(amountNum)} & activate →`}
           </button>
           <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:10, lineHeight:1.6 }}>
-            Profit of {fmt(totalProfit)} credited to your balance at maturity.
-            Principal also returned in full.
+            Your {fmt(amountNum)} is locked for {fmtDuration(duration)}. Principal + {fmt(totalProfit)} profit, plus any task earnings made while this plan is active, are paid out together at maturity.
           </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reinvest Modal — roll a matured payout into a new plan, no fresh payment ──
+function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSuccess, dark }) {
+  const T = theme(dark);
+  const payoutAvailable = maturedInv.expected_total + (maturedInv.locked_task_earnings ?? 0);
+
+  // Default to the same tier they were in, if it's still active; else the closest one they can afford
+  const defaultPlan = plans.find(p => p.name === maturedInv.plan_name)
+    ?? plans.filter(p => p.min_amount <= payoutAvailable).sort((a,b) => b.min_amount - a.min_amount)[0]
+    ?? plans[0];
+
+  const [planId, setPlanId]     = useState(defaultPlan?.id ?? "");
+  const [amount, setAmount]     = useState(String(payoutAvailable));
+  const [duration, setDuration] = useState(maturedInv.duration_months ?? 3);
+  const [loading, setLoading]   = useState(false);
+  const [err, setErr]           = useState("");
+
+  const selectedPlan = plans.find(p => p.id === planId) ?? defaultPlan;
+  const amountNum    = parseInt(amount, 10) || 0;
+  const amountValid  = selectedPlan && amountNum >= selectedPlan.min_amount && amountNum <= (profile?.balance ?? 0);
+  const totalProfit  = selectedPlan ? Math.floor(amountNum * selectedPlan.rate_percent / 100 * duration) : 0;
+  const vt            = selectedPlan ? (VIP_TIERS[selectedPlan.vip_tier] ?? VIP_TIERS.silver) : VIP_TIERS.silver;
+
+  const handleSubmit = async () => {
+    setErr("");
+    if (!selectedPlan) return setErr("Pick a plan");
+    if (amountNum > (profile?.balance ?? 0)) return setErr("Amount exceeds your available balance");
+    if (amountNum < selectedPlan.min_amount) return setErr(`Minimum for this plan is ${fmt(selectedPlan.min_amount)}`);
+    setLoading(true);
+    try {
+      await reinvestFromBalance(userId, selectedPlan.id, amountNum, duration);
+      await onSuccess();
+    } catch (e) {
+      setErr(e.message ?? "Reinvestment failed");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ background:vt.gradient, padding:"20px 22px", color:"white" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+            <div>
+              <div style={{ fontSize:28, marginBottom:4 }}>🔁</div>
+              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>Reinvest</div>
+              <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>Using your matured balance — no new payment needed</div>
+            </div>
+            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
+          </div>
+        </div>
+
+        <div style={{ padding:"20px 22px 32px" }}>
+          {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+
+          <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:12, color:BRAND_DARK, marginBottom:16 }}>
+            💰 Available balance: <strong>{fmt(profile?.balance ?? 0)}</strong>
+          </div>
+
+          <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Plan</label>
+          <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:14 }} value={planId} onChange={e => setPlanId(e.target.value)}>
+            {plans.map(p => <option key={p.id} value={p.id}>{p.icon} {p.name} — {p.rate_percent}%/month (min {fmt(p.min_amount)})</option>)}
+          </select>
+
+          <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Amount to reinvest</label>
+          <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${amountValid ? T.inputBrd : "#E24B4A"}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:14 }} type="number" value={amount} onChange={e => setAmount(e.target.value)} />
+
+          <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Lockup period</label>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:16 }}>
+            {[1, 3, 6, 12].map(m => (
+              <button key={m} onClick={() => setDuration(m)}
+                style={{
+                  padding:"10px 0", borderRadius:10, fontSize:12, fontWeight:700, cursor:"pointer",
+                  border: duration === m ? "none" : `0.5px solid ${T.border}`,
+                  background: duration === m ? vt.gradient : "transparent",
+                  color: duration === m ? "white" : T.text,
+                }}>
+                {fmtDuration(m)}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center", marginBottom:18 }}>
+            <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>Expected profit</div>
+            <div style={{ fontWeight:700, fontSize:18, color:BRAND_DARK }}>+{fmt(totalProfit)}</div>
+          </div>
+
+          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient, opacity: amountValid ? 1 : 0.6 }} onClick={handleSubmit} disabled={loading || !amountValid}>
+            {loading ? "Reinvesting..." : `Reinvest ${fmt(amountNum)} →`}
+          </button>
+          {amountNum > (profile?.balance ?? 0) && <p style={{ fontSize:11, color:"#E24B4A", textAlign:"center", marginTop:8 }}>Exceeds your available balance</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Extend Modal — push out an active plan's maturity date ──────
+function ExtendModal({ investment: inv, userId, onClose, onSuccess, dark }) {
+  const T = theme(dark);
+  const vt = VIP_TIERS[inv.vip_tier] ?? VIP_TIERS.silver;
+  const [months, setMonths]   = useState(3);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr]         = useState("");
+
+  const newTotalMonths = inv.duration_months + months;
+  const newProfit      = Math.floor(inv.amount * inv.rate_percent / 100 * newTotalMonths);
+  const extraProfit    = newProfit - inv.expected_profit;
+  const newEndsAt       = new Date(new Date(inv.starts_at).getTime() + newTotalMonths * 30 * 86400000);
+
+  const handleSubmit = async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      await extendInvestment(userId, inv.id, months);
+      await onSuccess();
+    } catch (e) {
+      setErr(e.message ?? "Failed to extend");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ background:vt.gradient, padding:"20px 22px", color:"white" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+            <div>
+              <div style={{ fontSize:28, marginBottom:4 }}>⏳</div>
+              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>Extend {inv.plan_name}</div>
+              <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>Keep the same {fmt(inv.amount)} locked for longer</div>
+            </div>
+            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
+          </div>
+        </div>
+
+        <div style={{ padding:"20px 22px 32px" }}>
+          {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+
+          <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Add to lockup</label>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:16 }}>
+            {[1, 3, 6, 12].map(m => (
+              <button key={m} onClick={() => setMonths(m)}
+                style={{
+                  padding:"10px 0", borderRadius:10, fontSize:12, fontWeight:700, cursor:"pointer",
+                  border: months === m ? "none" : `0.5px solid ${T.border}`,
+                  background: months === m ? vt.gradient : "transparent",
+                  color: months === m ? "white" : T.text,
+                }}>
+                +{fmtDuration(m)}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+            {[
+              ["New total lockup", fmtDuration(newTotalMonths)],
+              ["New maturity date", newEndsAt.toLocaleDateString()],
+              ["Extra profit", `+${fmt(extraProfit)}`],
+              ["New total profit", fmt(newProfit)],
+            ].map(([lbl, val]) => (
+              <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
+                <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
+                <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{val}</div>
+              </div>
+            ))}
+          </div>
+
+          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient }} onClick={handleSubmit} disabled={loading}>
+            {loading ? "Extending..." : `Extend by ${fmtDuration(months)} →`}
+          </button>
         </div>
       </div>
     </div>

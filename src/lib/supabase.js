@@ -322,19 +322,51 @@ export async function getUserInvestments(userId) {
 }
 
 /**
- * Buy a growth plan with a custom amount (must be >= plan.min_amount).
+ * Buy a growth plan: pick an amount-tier (>= plan.min_amount) and a
+ * lockup duration (1, 3, 6 or 12 months) — the plan's monthly rate
+ * is fixed, but total profit = amount × rate × months.
  * The LivePay deposit must be confirmed BEFORE calling this —
  * call it in the same polling-success callback you use for deposits.
  * Pays 2-level referral commission out of `amount` server-side.
  */
-export async function buyInvestmentPlan(userId, planId, amount) {
+export async function buyInvestmentPlan(userId, planId, amount, durationMonths) {
   const { data, error } = await supabase.rpc("buy_investment_plan", {
-    p_user_id: userId,
-    p_plan_id: planId,
-    p_amount:  amount,
+    p_user_id:         userId,
+    p_plan_id:         planId,
+    p_amount:          amount,
+    p_duration_months: durationMonths,
   });
   if (error) throw error;
   return data;
+}
+
+/**
+ * Reinvest: start a new plan using existing balance (e.g. a matured
+ * payout) instead of a fresh mobile-money payment. No referral
+ * commission is paid — it isn't new external money.
+ */
+export async function reinvestFromBalance(userId, planId, amount, durationMonths) {
+  const { data, error } = await supabase.rpc("reinvest_balance", {
+    p_user_id:         userId,
+    p_plan_id:         planId,
+    p_amount:          amount,
+    p_duration_months: durationMonths,
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Extend an active (not yet matured) investment's lockup by N more
+ * months. Profit is recalculated for the new total duration.
+ */
+export async function extendInvestment(userId, investmentId, additionalMonths) {
+  const { error } = await supabase.rpc("extend_investment", {
+    p_user_id:           userId,
+    p_investment_id:     investmentId,
+    p_additional_months: additionalMonths,
+  });
+  if (error) throw error;
 }
 
 /**
@@ -361,8 +393,9 @@ export async function requestInvestmentPayment(userId, amount, method, phone) {
 }
 
 /**
- * Check & credit any matured investments for this user.
- * Safe to call on every app load — idempotent.
+ * Check & credit any matured investments for this user — pays out
+ * principal + profit + any locked task earnings that accrued while
+ * the plan was active. Safe to call on every app load — idempotent.
  */
 export async function matureUserInvestments(userId) {
   const { data, error } = await supabase.rpc("mature_due_investments", {
