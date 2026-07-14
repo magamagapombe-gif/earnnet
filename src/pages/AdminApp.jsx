@@ -218,7 +218,7 @@ export default function AdminApp() {
         subtype: formData.subtype || null,
         link: formData.link || null,
         duration_seconds: parseInt(formData.duration_seconds) || 60,
-        icon: formData.icon, reward: parseInt(formData.reward), budget: parseInt(formData.budget),
+        icon: formData.icon, budget: parseInt(formData.budget),
         limit_count: parseInt(formData.limit), category: formData.type,
         color: "#E1F5EE", text_color: "#0F6E56", time_est: `${Math.ceil((parseInt(formData.duration_seconds)||60)/60)} min`,
       });
@@ -481,7 +481,7 @@ function TasksTab({ tasks, onToggle, onCreate }) {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
                 <div style={{ background: "#f8f8f8", borderRadius: 8, padding: "8px 10px" }}>
                   <div style={{ fontSize: 10, color: "#888" }}>Reward</div>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: "#1D9E75" }}>{fmt(t.reward)}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#1D9E75" }}>By plan tier</div>
                 </div>
                 <div style={{ background: "#f8f8f8", borderRadius: 8, padding: "8px 10px" }}>
                   <div style={{ fontSize: 10, color: "#888" }}>Completions</div>
@@ -616,7 +616,7 @@ function SettingsTab({ settings, onSave }) {
 
 // ── Create Task Modal ─────────────────────────────────────────
 function CreateTaskModal({ onClose, onCreate, businesses }) {
-  const [form, setForm] = useState({ title: "", business: "", type: "youtube_watch", subtype: "", link: "", duration_seconds: 60, reward: "", budget: "", limit: "", icon: "▶️" });
+  const [form, setForm] = useState({ title: "", business: "", type: "youtube_watch", subtype: "", link: "", duration_seconds: 60, budget: "", limit: "", icon: "▶️" });
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -627,7 +627,6 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
     setErr("");
     if (!form.title)    return setErr("Task title is required");
     if (!form.business) return setErr("Select a business");
-    if (!form.reward)   return setErr("Reward amount is required");
     if (!form.budget)   return setErr("Budget is required");
     if (!form.limit)    return setErr("Max completions is required");
     if ((form.type === "youtube_watch" || form.type === "youtube_subscribe" || form.type === "tiktok") && !form.link)
@@ -738,7 +737,9 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
             </div>
           )}
 
-          <div><label style={A.label}>Reward per user (UGX)</label><input style={A.input} type="number" placeholder="500" value={form.reward} onChange={e => set("reward", e.target.value)} /></div>
+          <div style={{ gridColumn:"1/-1", background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:12, color:"#0F6E56" }}>
+            💡 Reward isn't set here — each user is paid their own active plan's per-task rate automatically when they complete this task. Budget below is just a spend ceiling.
+          </div>
           <div><label style={A.label}>Total budget (UGX)</label><input style={A.input} type="number" placeholder="250000" value={form.budget} onChange={e => set("budget", e.target.value)} /></div>
           <div><label style={A.label}>Max completions</label><input style={A.input} type="number" placeholder="500" value={form.limit} onChange={e => set("limit", e.target.value)} /></div>
         </div>

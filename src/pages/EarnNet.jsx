@@ -111,6 +111,34 @@ function getActiveTier(investments) {
   };
 }
 
+// Given a user's investments, find the ACTIVE investment that will
+// absorb the next task completion, mirroring complete_task()'s
+// server-side rule exactly: oldest active plan with quota left
+// today gets filled first. Each plan pays its own task_reward, so
+// running multiple plans at once means earning from each of them
+// as their daily allowances get worked through.
+function getTaskEarningInfo(investments) {
+  const active = (investments ?? []).filter(i => i.status === "active");
+  if (active.length === 0) return null;
+  const todayStr = new Date().toDateString();
+  const withToday = active.map(i => ({
+    ...i,
+    tasksToday: (i.tasks_today_date && new Date(i.tasks_today_date).toDateString() === todayStr) ? (i.tasks_today ?? 0) : 0,
+  }));
+  const totalDailyTasks     = withToday.reduce((s, i) => s + (i.daily_tasks ?? 0), 0);
+  const tasksRemainingToday = withToday.reduce((s, i) => s + Math.max(0, (i.daily_tasks ?? 0) - i.tasksToday), 0);
+  const next = withToday
+    .filter(i => i.tasksToday < i.daily_tasks)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0];
+  return {
+    totalDailyTasks,
+    tasksRemainingToday,
+    nextReward: next?.task_reward ?? null,
+    plansCount: active.length,
+  };
+}
+
+
 // ── Dark mode context ──────────────────────────────────────────
 function useDarkMode() {
   const [dark, setDark] = useState(() => {
@@ -585,8 +613,8 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const handleCompleteTask = async (taskId, proofBase64) => {
     if (!profile?.activated) { setActivateModal(true); return; }
     try {
-      await completeTask(uid, taskId, proofBase64);
-      showToast("Task completed! Earnings locked to your plan 🔒");
+      const reward = await completeTask(uid, taskId, proofBase64);
+      showToast(`+${fmt(reward)} locked to your plan 🔒`);
       await Promise.all([loadTasks(), refreshProfile(), loadWallet(), loadInvestments()]);
     } catch (e) { showToast(e.message ?? "Could not complete task", "error"); }
   };
@@ -1873,7 +1901,9 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
   const streakDays  = profile?.streak_days ?? 0;
   const streakBonus = settings.streak_bonus ?? 5000;
   const T = theme(dark);
-  const tierInfo = getActiveTier(investments);
+  const tierInfo    = getActiveTier(investments);
+  const earningInfo = getTaskEarningInfo(investments);
+  const tasksWithReward = tasks.map(t => ({ ...t, reward: earningInfo?.nextReward ?? t.reward }));
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
@@ -1948,8 +1978,8 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
           <span style={{ fontWeight:600, fontSize:15, color:T.text }}>Available tasks</span>
           <button style={{ background:"none", border:"none", color:BRAND, fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onGoTasks}>See all →</button>
         </div>
-        {tasks.slice(0, 3).map(t => <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} compact dark={dark} />)}
-        {tasks.length === 0 && <div style={{ color:T.textSub, fontSize:13, textAlign:"center", padding:24 }}>All tasks done! Check back soon 🎉</div>}
+        {tasksWithReward.slice(0, 3).map(t => <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} compact dark={dark} />)}
+        {tasksWithReward.length === 0 && <div style={{ color:T.textSub, fontSize:13, textAlign:"center", padding:24 }}>All tasks done! Check back soon 🎉</div>}
       </div>
     </div>
   );
@@ -1963,6 +1993,7 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
   // Gate: user must have an active investment plan
   const tierInfo      = getActiveTier(investments);
   const hasActivePlan = !!tierInfo;
+  const earningInfo   = getTaskEarningInfo(investments);
 
   if (!hasActivePlan) {
     return (
@@ -1989,29 +2020,51 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
     );
   }
 
+  // Every active plan's daily task slots are used up for today.
+  if (earningInfo && earningInfo.tasksRemainingToday === 0) {
+    return (
+      <div style={{ animation:"slideUp 0.3s ease", padding:"40px 24px", textAlign:"center" }}>
+        <div style={{ fontSize:64, marginBottom:16 }}>⏰</div>
+        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:10 }}>
+          All done for today
+        </div>
+        <div style={{ fontSize:14, color:T.textSub, lineHeight:1.7, marginBottom:24, maxWidth:280, margin:"0 auto 24px" }}>
+          You've completed all {earningInfo.totalDailyTasks} tasks across your {earningInfo.plansCount} active plan{earningInfo.plansCount !== 1 ? "s" : ""} today. New tasks unlock tomorrow.
+        </div>
+        <button style={{ ...S.primaryBtn, width:"auto", padding:"13px 36px" }} onClick={onGoGrow}>
+          Buy another plan for more tasks →
+        </button>
+      </div>
+    );
+  }
+
   // Filter tasks by plan access — a task's min_plan_level (if set) must be
   // <= the user's active plan level. legend_only is kept as a shorthand for
   // min_plan_level 16 so existing tasks created before this field existed
-  // keep working unchanged.
+  // keep working unchanged. Reward is injected per-task from whichever
+  // active plan will actually absorb the next completion.
   const userLevel = tierInfo?.level ?? 0;
-  const accessibleTasks = tasks.filter(t => {
-    const required = t.subtype === "legend_only" ? 16 : (t.min_plan_level ?? 1);
-    return userLevel >= required;
-  });
+  const accessibleTasks = tasks
+    .filter(t => {
+      const required = t.subtype === "legend_only" ? 16 : (t.min_plan_level ?? 1);
+      return userLevel >= required;
+    })
+    .map(t => ({ ...t, reward: earningInfo?.nextReward ?? t.reward }));
 
   const categories = ["all", ...new Set(accessibleTasks.map(t => t.category).filter(Boolean))];
   const filtered   = filter === "all" ? accessibleTasks : accessibleTasks.filter(t => t.category === filter);
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
-      {/* Daily limit banner */}
-      {tierInfo && (
+      {/* Daily limit banner — aggregated across every active plan */}
+      {earningInfo && (
         <div style={{ margin:"12px 16px 0", background: dark ? "#142e20" : "#E1F5EE", borderRadius:12, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div style={{ fontSize:12, color:BRAND_DARK }}>
-            <strong>{tierInfo.dailyTasks === null ? "Unlimited" : `${tierInfo.dailyTasks} tasks`}</strong>/day · <strong>{fmt(tierInfo.taskReward)}</strong>/task
+            <strong>{earningInfo.tasksRemainingToday} of {earningInfo.totalDailyTasks} tasks</strong> left today
+            {earningInfo.nextReward != null && <> · next pays <strong>{fmt(earningInfo.nextReward)}</strong></>}
           </div>
           <span style={{ background:BRAND, color:"white", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>
-            {tierInfo.planName} {tierInfo.icon}
+            {earningInfo.plansCount} plan{earningInfo.plansCount !== 1 ? "s" : ""} active
           </span>
         </div>
       )}
