@@ -682,6 +682,31 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     loadTasks(); loadWallet(); loadReferrals(); loadInvestments();
   }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Persist which task the user is mid-task on, so a mobile tab
+  // reload (backgrounding a task that opened YouTube/TikTok/a site)
+  // can reopen the same task screen instead of silently dropping
+  // back to the tab list and losing progress.
+  useEffect(() => {
+    try {
+      if (selectedTask) localStorage.setItem("earnnet_selected_task_id", selectedTask.id);
+      else localStorage.removeItem("earnnet_selected_task_id");
+    } catch {}
+  }, [selectedTask]);
+
+  // Once tasks have loaded after a fresh mount, check for a pending
+  // task id from before the reload and reopen it automatically.
+  useEffect(() => {
+    if (selectedTask || tasks.length === 0) return;
+    try {
+      const pendingId = localStorage.getItem("earnnet_selected_task_id");
+      if (!pendingId) return;
+      const found = tasks.find(task => task.id === pendingId);
+      if (found) setSelectedTask(found);
+      else localStorage.removeItem("earnnet_selected_task_id"); // task no longer active/available
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
+
   const handleCompleteTask = async (taskId, proofBase64) => {
     if (!profile?.activated) { setActivateModal(true); return; }
     try {
@@ -1089,6 +1114,39 @@ function DepositModal({ settings, userId, currentBalance, profile, onClose, onSu
   );
 }
 
+// ── Persisted task-in-progress helpers ──────────────────────────
+// Mobile browsers routinely discard a backgrounded tab (e.g. after
+// tapping a task link that opens YouTube/TikTok/a website) and just
+// reload it fresh when the user returns — wiping any useState timer.
+// We persist the bare minimum (task id + real start time) to
+// localStorage the moment a task starts, so on reload we can work
+// out from the wall clock how much time has actually passed and
+// resume — or immediately credit — instead of losing progress.
+const ACTIVE_TASK_TIMER_KEY = "earnnet_active_task_timer";
+
+function readActiveTaskTimer(taskId) {
+  try {
+    const raw = localStorage.getItem(ACTIVE_TASK_TIMER_KEY);
+    if (!raw) return null;
+    const stored = JSON.parse(raw);
+    if (stored.taskId !== taskId) return null;
+    return stored; // { taskId, startedAt, duration }
+  } catch { return null; }
+}
+function writeActiveTaskTimer(taskId, duration) {
+  try {
+    localStorage.setItem(ACTIVE_TASK_TIMER_KEY, JSON.stringify({ taskId, startedAt: Date.now(), duration }));
+  } catch {}
+}
+function clearActiveTaskTimer() {
+  try { localStorage.removeItem(ACTIVE_TASK_TIMER_KEY); } catch {}
+}
+// How many seconds are left, based on real elapsed time — never on a
+// JS interval that could've been suspended along with the tab.
+function elapsedSecondsSince(startedAt) {
+  return Math.floor((Date.now() - startedAt) / 1000);
+}
+
 // ── Countdown Timer Hook ───────────────────────────────────────
 function useCountdown(seconds, onComplete) {
   const [timeLeft, setTimeLeft] = useState(seconds);
@@ -1098,7 +1156,13 @@ function useCountdown(seconds, onComplete) {
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
-  const start = () => { setTimeLeft(seconds); setRunning(true); setFinished(false); };
+  // Pass a lower starting point to resume a timer that's already
+  // partway through (e.g. restored from localStorage after reload).
+  const start = (resumeTimeLeft) => {
+    setTimeLeft(resumeTimeLeft ?? seconds);
+    setRunning(true);
+    setFinished(false);
+  };
 
   useEffect(() => {
     if (!running) return;
@@ -1361,24 +1425,57 @@ function YoutubeSubscribeTask({ task: t, profile, onBack, onComplete, dark }) {
   const T        = theme(dark);
   const duration = t.duration_seconds ?? 30;
   const [phase, setPhase] = useState("ready"); // ready | timing | done
+  const autoCreditedRef = useRef(false);
 
   const timer = useCountdown(duration, async () => {
+    clearActiveTaskTimer();
     await onComplete(t.id);
     setPhase("done");
   });
 
+  // On mount, check whether this task was already started before the
+  // page got reloaded (tab backgrounded/discarded on mobile). If so,
+  // resume from the real elapsed time instead of restarting — and if
+  // enough real time has already passed, credit immediately.
+  useEffect(() => {
+    const stored = readActiveTaskTimer(t.id);
+    if (!stored) return;
+    const elapsed = elapsedSecondsSince(stored.startedAt);
+    const remaining = stored.duration - elapsed;
+    if (remaining <= 0) {
+      if (autoCreditedRef.current) return;
+      autoCreditedRef.current = true;
+      setPhase("timing");
+      clearActiveTaskTimer();
+      onComplete(t.id).then(() => setPhase("done"));
+    } else {
+      setPhase("timing");
+      timer.start(remaining);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.id]);
+
   const handleStart = () => {
     if (!profile?.activated) return;
     if (t.link) window.open(t.link, "_blank");
+    writeActiveTaskTimer(t.id, duration);
     setPhase("timing");
     timer.start();
+  };
+
+  const handleBack = () => {
+    // Don't leave a stale start-time behind — re-opening this same
+    // task later should start fresh, not silently auto-credit off an
+    // old timestamp.
+    if (phase !== "done") clearActiveTaskTimer();
+    onBack();
   };
 
   if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
-      <TaskHeader task={t} onBack={onBack} />
+      <TaskHeader task={t} onBack={handleBack} />
       <div style={{ padding:"0 16px", marginTop:-12 }}>
         <TaskStatBar task={t} dark={dark} />
 
@@ -1443,13 +1540,36 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
   const [proofName, setProofName] = useState("");
   const [err, setErr]       = useState("");
 
-  const timer = useCountdown(duration, () => setPhase("upload"));
+  const timer = useCountdown(duration, () => { clearActiveTaskTimer(); setPhase("upload"); });
+
+  // Resume from a persisted start time if the tab was reloaded
+  // mid-task (see YoutubeSubscribeTask for why this is needed).
+  useEffect(() => {
+    const stored = readActiveTaskTimer(t.id);
+    if (!stored) return;
+    const elapsed = elapsedSecondsSince(stored.startedAt);
+    const remaining = stored.duration - elapsed;
+    clearActiveTaskTimer(); // verification window's role ends either way
+    if (remaining <= 0) {
+      setPhase("upload");
+    } else {
+      setPhase("timing");
+      timer.start(remaining);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.id]);
 
   const handleStart = () => {
     if (!profile?.activated) return;
     if (t.link) window.open(t.link, "_blank");
+    writeActiveTaskTimer(t.id, duration);
     setPhase("timing");
     timer.start();
+  };
+
+  const handleBack = () => {
+    if (phase !== "done") clearActiveTaskTimer();
+    onBack();
   };
 
   const handleFileChange = (e) => {
@@ -1478,7 +1598,7 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
-      <TaskHeader task={t} onBack={onBack} />
+      <TaskHeader task={t} onBack={handleBack} />
       <div style={{ padding:"0 16px", marginTop:-12 }}>
         <TaskStatBar task={t} dark={dark} />
 
@@ -1565,6 +1685,111 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
           <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15 }} onClick={handleSubmit} disabled={doing}>
             {doing ? "Submitting..." : "Submit proof & claim reward →"}
           </button>
+        )}
+      </div>
+      <TaskPageStyles />
+    </div>
+  );
+}
+
+// ── Website Visit Task ──────────────────────────────────────────
+// Same pattern as YoutubeSubscribeTask: open the link, run a dwell
+// timer, auto-credit when it completes — with resume-from-reload.
+function WebsiteVisitTask({ task: t, profile, onBack, onComplete, dark }) {
+  const T        = theme(dark);
+  const duration = t.duration_seconds ?? 30;
+  const [phase, setPhase] = useState("ready"); // ready | timing | done
+  const autoCreditedRef = useRef(false);
+
+  const timer = useCountdown(duration, async () => {
+    clearActiveTaskTimer();
+    await onComplete(t.id);
+    setPhase("done");
+  });
+
+  useEffect(() => {
+    const stored = readActiveTaskTimer(t.id);
+    if (!stored) return;
+    const elapsed = elapsedSecondsSince(stored.startedAt);
+    const remaining = stored.duration - elapsed;
+    if (remaining <= 0) {
+      if (autoCreditedRef.current) return;
+      autoCreditedRef.current = true;
+      setPhase("timing");
+      clearActiveTaskTimer();
+      onComplete(t.id).then(() => setPhase("done"));
+    } else {
+      setPhase("timing");
+      timer.start(remaining);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.id]);
+
+  const handleStart = () => {
+    if (!profile?.activated) return;
+    if (t.link) window.open(t.link, "_blank");
+    writeActiveTaskTimer(t.id, duration);
+    setPhase("timing");
+    timer.start();
+  };
+
+  const handleBack = () => {
+    if (phase !== "done") clearActiveTaskTimer();
+    onBack();
+  };
+
+  if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
+
+  return (
+    <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
+      <TaskHeader task={t} onBack={handleBack} />
+      <div style={{ padding:"0 16px", marginTop:-12 }}>
+        <TaskStatBar task={t} dark={dark} />
+
+        {phase === "ready" && (
+          <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
+            <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>How to earn {fmt(t.reward)}</div>
+            {[
+              "Tap Start Task — the website opens",
+              "Browse the page as instructed",
+              "Come back here and wait for the timer to finish"
+            ].map((s,i) => (
+              <div key={i} style={{ display:"flex", gap:12, marginBottom:10, alignItems:"flex-start" }}>
+                <div style={{ width:26, height:26, borderRadius:"50%", background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:12, color:BRAND_DARK, flexShrink:0 }}>{i+1}</div>
+                <div style={{ fontSize:13, color:T.textSub, lineHeight:1.6, paddingTop:4 }}>{s}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {phase === "timing" && (
+          <div style={{ background:T.card, borderRadius:16, padding:"32px 20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
+            <div style={{ fontSize:48, marginBottom:12 }}>🌐</div>
+            <div style={{ fontSize:11, color:T.textSub, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.08em" }}>Verifying your visit</div>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:52, fontWeight:700, color: timer.timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+              {timer.display}
+            </div>
+            <div style={{ height:8, background: dark ? "#2a5040" : "#eee", borderRadius:4, marginTop:16 }}>
+              <div style={{ height:"100%", width:`${((duration - timer.timeLeft) / duration) * 100}%`, background:BRAND, borderRadius:4, transition:"width 1s linear" }} />
+            </div>
+            <div style={{ fontSize:12, color:T.textSub, marginTop:12 }}>Stay on this page — reward credits when timer hits 0:00</div>
+          </div>
+        )}
+
+        {!profile?.activated && <ActivationBanner />}
+      </div>
+
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, padding:"16px", background:T.card, borderTop:`0.5px solid ${T.border}` }}>
+        {phase === "ready" && (
+          <button style={{ ...S.primaryBtn, padding:"15px 0", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}
+            onClick={handleStart} disabled={!profile?.activated}>
+            {profile?.activated ? <>🌐 Start Task &amp; Open Website</> : "⚡ Activate to earn"}
+          </button>
+        )}
+        {phase === "timing" && (
+          <div style={{ textAlign:"center", padding:"10px 0" }}>
+            <div style={{ fontSize:13, color:T.textSub }}>⏱ Timer running — stay on this page</div>
+          </div>
         )}
       </div>
       <TaskPageStyles />
@@ -1958,6 +2183,7 @@ function TaskDetailPage({ task: t, profile, onBack, onComplete, dark }) {
   if (t.type === "youtube_watch")     return <YoutubeWatchTask     task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "youtube_subscribe") return <YoutubeSubscribeTask task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "tiktok")            return <TiktokTask           task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
+  if (t.type === "website_visit")     return <WebsiteVisitTask     task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "like_product")      return <LikeTask             task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "like_song")         return <LikeTask             task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   return <GenericTask task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
