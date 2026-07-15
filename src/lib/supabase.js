@@ -61,13 +61,10 @@ export async function updateProfile(userId, updates) {
 // ── Tasks ──────────────────────────────────────────────────────
 
 export async function getActiveTasks(userId) {
-  const today = new Date().toISOString().split("T")[0];
-
   const { data: completed } = await supabase
     .from("task_completions")
     .select("task_id")
-    .eq("user_id", userId)
-    .eq("completed_date", today);
+    .eq("user_id", userId);
   const completedIds = (completed ?? []).map((c) => c.task_id);
 
   const { data, error } = await supabase
@@ -195,11 +192,22 @@ export async function activateAccount(userId, method, phone) {
         "Content-Type":  "application/json",
         "Authorization": `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ action: "deposit", userId, amount: fee, method, phone }),
+      body: JSON.stringify({ action: "deposit", userId, amount: fee, method, phone, purpose: "activation" }),
     }
   );
   const data = await res.json();
   if (!data.success) throw new Error(data.error ?? "Activation payment failed");
+
+  // Supersede any earlier pending activation request for this user before
+  // logging a new one — without this, every retry (network hiccup, phone
+  // number typo, etc.) leaves another "pending" row behind, and the
+  // webhook's lookup can end up with more than one candidate for the
+  // same user, which used to make activation silently fail to apply.
+  await supabase
+    .from("activation_requests")
+    .update({ status: "superseded" })
+    .eq("user_id", userId)
+    .eq("status", "pending");
 
   // Also log activation request for admin visibility
   await supabase.from("activation_requests").insert({

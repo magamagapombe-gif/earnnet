@@ -60,39 +60,54 @@ serve(async (req) => {
 
     // ── PAYMENT APPROVED ─────────────────────────────────────────
     if (status === "Success" || status === "successful" || status === "success" || status === "completed") {
-      // The deposit.amount is what the user was charged (including our platform fee).
-      // We credit exactly deposit.amount to their wallet — the fee was already collected
-      // on top by the livepay-payment function when it added deposit_fee_pct to the request.
-      // So credit the full deposit.amount as-is.
-      const creditAmount = deposit.amount;
+      const isActivation = deposit.purpose === "activation";
 
-      // Credit user balance using RPC (atomic)
-      const { error: rpcErr } = await supabase.rpc("credit_deposit", {
-        p_user_id:    deposit.user_id,
-        p_amount:     creditAmount,
-        p_deposit_id: deposit.id,
-      });
-
-      if (rpcErr) {
-        console.error("credit_deposit RPC failed:", rpcErr.message);
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("balance")
-          .eq("id", deposit.user_id)
-          .single();
-
-        await supabase
-          .from("profiles")
-          .update({ balance: (profile?.balance ?? 0) + creditAmount })
-          .eq("id", deposit.user_id);
-
+      if (isActivation) {
+        // Activation payments are NOT credited to the spendable wallet
+        // balance — they pay for account activation, full stop. Just
+        // log it as its own transaction type for the user's history.
         await supabase.from("transactions").insert({
           user_id:     deposit.user_id,
-          amount:      creditAmount,
-          type:        "deposit",
-          description: `Wallet deposit via ${deposit.method}`,
+          amount:      0,
+          type:        "activation",
+          description: `Account activation fee paid via ${deposit.method}`,
           created_at:  new Date().toISOString(),
         });
+      } else {
+        // The deposit.amount is what the user was charged (including our platform fee).
+        // We credit exactly deposit.amount to their wallet — the fee was already collected
+        // on top by the livepay-payment function when it added deposit_fee_pct to the request.
+        // So credit the full deposit.amount as-is.
+        const creditAmount = deposit.amount;
+
+        // Credit user balance using RPC (atomic)
+        const { error: rpcErr } = await supabase.rpc("credit_deposit", {
+          p_user_id:    deposit.user_id,
+          p_amount:     creditAmount,
+          p_deposit_id: deposit.id,
+        });
+
+        if (rpcErr) {
+          console.error("credit_deposit RPC failed:", rpcErr.message);
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("balance")
+            .eq("id", deposit.user_id)
+            .single();
+
+          await supabase
+            .from("profiles")
+            .update({ balance: (profile?.balance ?? 0) + creditAmount })
+            .eq("id", deposit.user_id);
+
+          await supabase.from("transactions").insert({
+            user_id:     deposit.user_id,
+            amount:      creditAmount,
+            type:        "deposit",
+            description: `Wallet deposit via ${deposit.method}`,
+            created_at:  new Date().toISOString(),
+          });
+        }
       }
 
       // Mark deposit confirmed
@@ -101,16 +116,16 @@ serve(async (req) => {
         .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
         .eq("id", deposit.id);
 
-      // ── Referral bonus on activation ──────────────────────────
-      // If this deposit was an activation fee payment, credit the referrer
-      const { data: activation } = await supabase
-        .from("activation_requests")
-        .select("user_id")
-        .eq("user_id", deposit.user_id)
-        .eq("status", "pending")
-        .single();
-
-      if (activation) {
+      // ── Activation + referral bonus ───────────────────────────
+      // Gated on deposit.purpose === 'activation' — the explicit signal
+      // set when the payment was initiated — rather than guessing from
+      // "does this user have some pending activation_requests row?".
+      // That old approach could both false-negative (multiple pending
+      // rows breaking .single()) and false-positive (an unrelated
+      // ordinary top-up made while a request happened to be pending).
+      // The activation_requests row is still looked up here, but only
+      // to close it out for admin visibility — not to decide anything.
+      if (isActivation) {
         // Load referral bonus amount from settings
         const { data: settingsRows } = await supabase.from("settings").select("*");
         const s = Object.fromEntries((settingsRows ?? []).map((r: any) => [r.key, r.value]));

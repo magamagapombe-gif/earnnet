@@ -32,7 +32,7 @@ serve(async (req) => {
       });
     }
 
-    const { action, amount, phone, method, userId } = await req.json();
+    const { action, amount, phone, method, userId, purpose } = await req.json();
 
     // Ensure the user can only act on their own account
     if (userId !== user.id) {
@@ -65,6 +65,7 @@ serve(async (req) => {
           phone_number: phone,
           status:       "pending",
           reference,
+          purpose:      purpose === "activation" ? "activation" : "wallet_topup",
         })
         .select()
         .single();
@@ -84,7 +85,7 @@ serve(async (req) => {
           amount:        chargedAmount,
           currency:      "UGX",
           reference,
-          description:   "EarnNet wallet deposit",
+          description:   purpose === "activation" ? "EarnNet account activation" : "EarnNet wallet deposit",
         }),
       });
 
