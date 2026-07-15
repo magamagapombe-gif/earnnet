@@ -613,14 +613,28 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
   const [loading, setLoading] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const typeIcons = { youtube_watch: "▶️", youtube_subscribe: "📺", tiktok: "🎵", social: "📱", survey: "📋", install: "⬇️", review: "⭐" };
+  const typeIcons = { youtube_watch: "▶️", youtube_subscribe: "📺", tiktok: "🎵", website_visit: "🌐", social: "📱", survey: "📋", install: "⬇️", review: "⭐" };
+
+  // Types that need a link because there's nothing to do the task on without one
+  const linkRequiredTypes = ["youtube_watch", "youtube_subscribe", "tiktok", "website_visit", "survey", "review"];
+  // Types that run a dwell timer before the task can be marked complete
+  const timedTypes = ["youtube_watch", "youtube_subscribe", "tiktok", "website_visit"];
+
+  const linkLabels = {
+    youtube_watch: "YouTube video URL",
+    youtube_subscribe: "YouTube channel URL",
+    tiktok: "TikTok profile / video URL",
+    website_visit: "Website URL",
+    survey: "Survey URL",
+    review: "Page / listing URL to review",
+  };
 
   const handleCreate = async () => {
     setErr("");
     if (!form.title)    return setErr("Task title is required");
     if (!form.business) return setErr("Select a business");
     if (!form.limit)    return setErr("Max completions is required");
-    if ((form.type === "youtube_watch" || form.type === "youtube_subscribe" || form.type === "tiktok") && !form.link)
+    if (linkRequiredTypes.includes(form.type) && !form.link)
       return setErr("Link is required for this task type");
     setLoading(true);
     try {
@@ -632,9 +646,10 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
     }
   };
 
-  const isTimed    = ["youtube_watch","youtube_subscribe","tiktok"].includes(form.type);
-  const isTiktok   = form.type === "tiktok";
-  const isLikeTask = form.type === "like_product" || form.type === "like_song";
+  const isTimed     = timedTypes.includes(form.type);
+  const needsLink    = linkRequiredTypes.includes(form.type);
+  const isTiktok    = form.type === "tiktok";
+  const isLikeTask  = form.type === "like_product" || form.type === "like_song";
 
   // Parse/set description JSON for like tasks
   const setMeta = (key, val) => {
@@ -663,6 +678,9 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
               </optgroup>
               <optgroup label="TikTok">
                 <option value="tiktok">🎵 TikTok</option>
+              </optgroup>
+              <optgroup label="Web">
+                <option value="website_visit">🌐 Website Visit</option>
               </optgroup>
               <optgroup label="Like / Rate">
                 <option value="like_product">🛍 Rate Product</option>
@@ -716,8 +734,8 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
             </select>
           </div>
 
-          {isTimed && (
-            <div style={{ gridColumn: "1/-1" }}><label style={A.label}>{form.type === "youtube_watch" ? "YouTube video URL" : form.type === "youtube_subscribe" ? "YouTube channel URL" : "TikTok profile / video URL"}</label>
+          {needsLink && (
+            <div style={{ gridColumn: "1/-1" }}><label style={A.label}>{linkLabels[form.type] ?? "Link"}</label>
               <input style={A.input} placeholder="https://..." value={form.link} onChange={e => set("link", e.target.value)} />
             </div>
           )}
