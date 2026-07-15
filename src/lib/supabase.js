@@ -61,10 +61,13 @@ export async function updateProfile(userId, updates) {
 // ── Tasks ──────────────────────────────────────────────────────
 
 export async function getActiveTasks(userId) {
+  const today = new Date().toISOString().split("T")[0];
+
   const { data: completed } = await supabase
     .from("task_completions")
     .select("task_id")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("completed_date", today);
   const completedIds = (completed ?? []).map((c) => c.task_id);
 
   const { data, error } = await supabase
