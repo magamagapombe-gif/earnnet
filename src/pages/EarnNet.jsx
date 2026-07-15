@@ -351,7 +351,6 @@ const TICKER_EVENTS = [
   { icon:"👥", msg:"James referred a friend and earned UGX 3,000 commission" },
   { icon:"🌱", msg:"Sandra activated a 3-month Growth plan — 6% return" },
   { icon:"💸", msg:"Robert from Gulu withdrew UGX 18,000 to MTN MoMo" },
-  { icon:"🔥", msg:"Patricia hit a 7-day streak and earned a bonus!" },
   { icon:"✅", msg:"Patrick watched a video ad and earned UGX 400" },
   { icon:"💎", msg:"Annet reached Gold VIP tier — bigger task rewards unlocked" },
   { icon:"💸", msg:"Emmanuel withdrew UGX 50,000 to Airtel Money" },
@@ -392,7 +391,6 @@ function LandingPage({ onGetStarted, settings, dark, toggleDark }) {
     { icon: "📋", title: "Complete tasks",    desc: "Follow social pages, fill surveys, install apps — get paid instantly per task." },
     { icon: "👥", title: "Refer & earn",       desc: "Earn 10% + 5% commission across 2 levels when your referrals buy a growth plan." },
     { icon: "💸", title: "Withdraw anytime",   desc: "Cash out to MTN or Airtel Money. Processed within 24 hours." },
-    { icon: "🔥", title: "Daily streak bonus", desc: "Log in 7 days in a row and earn a bonus on top of your task income." },
   ];
   const steps = [
     { n: "1", title: "Sign up free",          desc: "Create your account in under a minute." },
@@ -942,7 +940,7 @@ function ActivateModal({ settings, userId, currentBalance, profile, onClose, onS
           A one-time activation fee of <strong style={{ color:T.text }}>{fmt(fee)}</strong> unlocks all task earning features and withdrawals.
         </p>
         <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px 16px", marginBottom:18 }}>
-          {["✅ Complete all tasks and earn","💸 Request withdrawals","👥 Earn referral commissions","🔥 Streak bonuses"].map(b => (
+          {["✅ Complete all tasks and earn","💸 Request withdrawals","👥 Earn referral commissions"].map(b => (
             <div key={b} style={{ fontSize:13, color:BRAND_DARK, marginBottom:5 }}>{b}</div>
           ))}
         </div>
@@ -2229,8 +2227,6 @@ function EarningsChart({ txns, dark }) {
 
 // ── Home Tab ───────────────────────────────────────────────────
 function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, onActivate, onSelectTask, txns, onGoGrow, investments, dark }) {
-  const streakDays  = profile?.streak_days ?? 0;
-  const streakBonus = settings.streak_bonus ?? 5000;
   const T = theme(dark);
   const tierInfo    = getActiveTier(investments);
   const earningInfo = getTaskEarningInfo(investments);
@@ -2271,23 +2267,6 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
             </div>
           </div>
           <div style={{ background:BRAND, color:"white", borderRadius:10, padding:"7px 14px", fontSize:12, fontWeight:600 }}>Invest →</div>
-        </div>
-      </div>
-
-      <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 16px 12px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div>
-            <div style={{ fontWeight:600, fontSize:15, color:T.text }}>🔥 Daily streak</div>
-            <div style={{ fontSize:12, color:T.textSub, marginTop:3 }}>
-              {streakDays >= 7 ? `You earned ${fmt(streakBonus)} streak bonus!` : `${7 - streakDays} more days for ${fmt(streakBonus)} bonus`}
-            </div>
-          </div>
-          <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:28, color:BRAND }}>
-            {streakDays}<span style={{ fontSize:14, fontWeight:400, color:T.textSub }}>/7</span>
-          </div>
-        </div>
-        <div style={{ display:"flex", gap:6, marginTop:14 }}>
-          {[...Array(7)].map((_, i) => <div key={i} style={{ flex:1, height:6, borderRadius:3, background: i < streakDays ? BRAND : (dark ? "#2a5040" : "#eee") }} />)}
         </div>
       </div>
 
