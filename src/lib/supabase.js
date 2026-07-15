@@ -320,10 +320,10 @@ export async function getInvestmentPlans() {
   return data ?? [];
 }
 
-/** Fetch all investments for a user (active + paid_out).
+/** Fetch all investments for a user (active + completed).
  *  Every field needed for display (name, icon, amount, rate,
- *  duration, vip tier, profit) is snapshotted directly onto each
- *  row at purchase time, so no join is needed. */
+ *  duration, cycle progress, locked earnings) is snapshotted directly
+ *  onto each row at purchase time, so no join is needed. */
 export async function getUserInvestments(userId) {
   const { data, error } = await supabase
     .from("user_investments")
@@ -369,9 +369,10 @@ export async function enableAutoModeForPlan(userId, investmentId) {
 }
 
 /**
- * Reinvest: start a new plan tier using existing balance (e.g. a
- * matured payout) instead of a fresh mobile-money payment. No
- * referral commission is paid — it isn't new external money.
+ * Reinvest: start a new plan tier using existing balance (e.g. the
+ * principal returned when a previous plan completed its 12 cycles)
+ * instead of a fresh mobile-money payment. No referral commission is
+ * paid — it isn't new external money.
  */
 export async function reinvestFromBalance(userId, planLevel) {
   const { data, error } = await supabase.rpc("reinvest_from_balance", {
@@ -406,14 +407,49 @@ export async function requestInvestmentPayment(userId, amount, method, phone) {
 }
 
 /**
- * Check & credit any matured investments for this user — pays out
- * principal + profit + any locked task earnings that accrued while
- * the plan was active. Safe to call on every app load — idempotent.
+ * Process any due monthly cycles for this user's active vault plans —
+ * REPLACES matureUserInvestments now that plans pay out monthly instead
+ * of in one lump sum. For each investment whose next_payout_due_at has
+ * passed: releases that cycle's task earnings if the escalating referral
+ * condition is met (see check_monthly_eligibility), otherwise leaves them
+ * held to roll into the next cycle; releases principal only once cycle 12
+ * completes. Safe to call on every app load — idempotent.
  */
-export async function matureUserInvestments(userId) {
-  const { data, error } = await supabase.rpc("mature_due_investments", {
+export async function processMonthlyVaultPayouts(userId) {
+  const { data, error } = await supabase.rpc("process_monthly_vault_payouts", {
     p_user_id: userId,
   });
   if (error) throw error;
-  return data ?? 0; // returns count of investments matured
+  return data ?? 0; // returns count of investments processed
+}
+
+/**
+ * Opt-in choice for a cycle whose referral condition wasn't met: fold
+ * that cycle's held task earnings into current_principal instead of
+ * waiting for a later cycle to qualify. One-way — folded amounts grow
+ * what's returned at cycle 12, but no longer pay out as earnings later.
+ * Only works while the investment actually has something held.
+ */
+export async function reinvestHeldProfit(userId, investmentId) {
+  const { data, error } = await supabase.rpc("reinvest_held_profit", {
+    p_user_id:       userId,
+    p_investment_id: investmentId,
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * How many of this user's referrals currently qualify toward a monthly
+ * payout condition — activated, with an active plan, optionally at or
+ * above minAmount. Mirrors count_qualifying_referrals on the backend;
+ * used purely for client-side "you have X of Y needed" display.
+ */
+export async function getQualifyingReferralCount(userId, minAmount = 0) {
+  const { data, error } = await supabase.rpc("count_qualifying_referrals", {
+    p_user_id:     userId,
+    p_min_amount:  minAmount,
+  });
+  if (error) throw error;
+  return data ?? 0;
 }
