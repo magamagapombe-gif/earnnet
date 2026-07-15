@@ -1,0 +1,25 @@
+name: Run auto-mode task completion
+
+on:
+  schedule:
+    # every 15 minutes — adjust to taste. GitHub's scheduler is best-effort
+    # and can lag a few minutes under load; fine for this use case.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {} # lets you trigger it manually from the Actions tab
+
+jobs:
+  run-auto-mode:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call auto-mode-runner Edge Function
+        run: |
+          status=$(curl -s -o response.json -w "%{http_code}" -X POST \
+            "https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/auto-mode-runner" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json")
+          echo "HTTP status: $status"
+          cat response.json
+          if [ "$status" -ge 300 ]; then
+            echo "auto-mode-runner call failed"
+            exit 1
+          fi
