@@ -12,15 +12,15 @@ serve(async (req) => {
   }
 
   try {
-    // Optional: verify the webhook is genuinely from LivePay
-    const signature = req.headers.get("x-livepay-signature") ?? "";
-    // If LivePay provides a webhook secret, verify here. For now we verify
-    // the API key header they send back:
-    const authHeader = req.headers.get("Authorization") ?? "";
-    if (authHeader && authHeader !== `Bearer ${LIVEPAY_API_KEY}`) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
-    }
-
+    // NOTE: LivePay does not send `Authorization: Bearer <LIVEPAY_API_KEY>` on
+    // its webhook calls (confirmed via Supabase logs — real callbacks were
+    // being rejected with 401 by the old check below, silently dropping
+    // confirmed deposits/activations even though the user had been charged).
+    // LivePay does not currently document a webhook signing secret either,
+    // so for now we authenticate the callback by requiring it to reference
+    // a real, known-pending deposit row (looked up below) rather than by
+    // header. If LivePay adds a documented signature/secret scheme later,
+    // verify it here instead.
     const body = await req.json();
     console.log("LivePay webhook received:", JSON.stringify(body));
 
@@ -139,13 +139,7 @@ serve(async (req) => {
           .single();
 
         if (userProfile?.referred_by) {
-          // Credit referrer
-          await supabase
-            .from("profiles")
-            .update({ balance: supabase.rpc("increment_balance", { uid: userProfile.referred_by, amt: refBonus }) })
-            .eq("id", userProfile.referred_by);
-
-          // Simpler: direct increment
+          // Credit referrer (direct increment)
           const { data: refProfile } = await supabase
             .from("profiles")
             .select("balance")
