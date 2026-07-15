@@ -1111,6 +1111,33 @@ function useCountdown(seconds, onComplete) {
   return { timeLeft, running, finished, start, display: fmt(timeLeft) };
 }
 
+// ── YouTube IFrame Player API loader ────────────────────────────
+// Loads https://www.youtube.com/iframe_api once and shares the promise
+// across every mount, instead of talking to the iframe via hand-rolled
+// postMessage calls. This is the officially supported way to get
+// reliable onReady / onStateChange callbacks from an embedded player —
+// the raw postMessage protocol used previously isn't documented or
+// guaranteed by YouTube, which is why state-change events could silently
+// never arrive even while the video was visibly playing.
+let ytApiPromise = null;
+function loadYouTubeIframeAPI() {
+  if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
+  if (ytApiPromise) return ytApiPromise;
+  ytApiPromise = new Promise((resolve) => {
+    const prevCallback = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prevCallback === "function") prevCallback();
+      resolve(window.YT);
+    };
+    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(tag);
+    }
+  });
+  return ytApiPromise;
+}
+
 // ── YouTube Watch Task ─────────────────────────────────────────
 function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   const T        = theme(dark);
@@ -1119,12 +1146,12 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   const [phase, setPhase]               = useState("ready");
   const [timerRunning, setTimerRunning] = useState(false);
   const [elapsed, setElapsed]           = useState(0);
-  const [vidState, setVidState]         = useState("idle");
 
-  const doneRef     = useRef(false);
-  const intervalRef = useRef(null);
-  const lastTickRef = useRef(null);
-  const iframeRef   = useRef(null);
+  const doneRef      = useRef(false);
+  const intervalRef  = useRef(null);
+  const lastTickRef  = useRef(null);
+  const playerElRef  = useRef(null); // div the YT.Player attaches to
+  const playerRef    = useRef(null); // the YT.Player instance itself
 
   const fmtTime = (s) => {
     const safe = Math.max(0, Math.round(s));
@@ -1138,63 +1165,43 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   };
   const ytId = getYTId(t.link);
 
-  // Send a command to the YT iframe player
-  const ytCmd = (func) => {
-    try {
-      iframeRef.current?.contentWindow?.postMessage(
-        JSON.stringify({ event: "command", func, args: [] }),
-        "https://www.youtube.com"
-      );
-    } catch {}
-  };
-
-  // YouTube's embedded player will NOT emit onStateChange (or any
-  // player-to-parent) messages until the parent sends this
-  // "listening" handshake first. The official iframe_api script does
-  // this automatically under the hood; since we talk to the iframe
-  // directly via postMessage instead of loading that script, we have
-  // to send the handshake ourselves — otherwise commands like
-  // playVideo still work (parent → player), but state events never
-  // come back (player → parent), so the timer never sees "playing"
-  // and stays stuck on "paused" forever.
-  const listenerIdRef = useRef(Math.random().toString(36).slice(2));
-  const ytListen = () => {
-    try {
-      iframeRef.current?.contentWindow?.postMessage(
-        JSON.stringify({ event: "listening", id: listenerIdRef.current }),
-        "https://www.youtube.com"
-      );
-    } catch {}
-  };
-
-  // Once iframe loads, send playVideo — retry at 500ms and 1500ms
-  // for slow devices. The button tap (handleStart) was the required
-  // user gesture so autoplay is unlocked on mobile.
-  const handleIframeLoad = () => {
-    ytListen();
-    ytCmd("playVideo");
-    setTimeout(() => { ytListen(); ytCmd("playVideo"); }, 500);
-    setTimeout(() => { ytListen(); ytCmd("playVideo"); }, 1500);
-  };
-
-  // YouTube state events — pause timer when user pauses, resume when they play
+  // Build a real YT.Player once we enter "watching" and the container
+  // div has mounted. Using the official IFrame Player API (instead of
+  // hand-rolled postMessage calls) means onReady/onStateChange are
+  // callbacks YouTube actually guarantees — no more handshake that can
+  // silently fail while the video plays on with the timer never told.
   useEffect(() => {
-    if (phase !== "watching") return;
-    const handler = (e) => {
-      if (!e.data) return;
-      try {
-        const msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
-        if (msg.event === "onStateChange") {
-          const s = Number(msg.info);
-          if (s === 1 || s === 3) { setVidState("playing");  setTimerRunning(true);  }
-          else if (s === 2)       { setVidState("paused");   setTimerRunning(false); }
-          else if (s === 0)       { setVidState("ended");    setTimerRunning(false); }
-        }
-      } catch {}
+    if (phase !== "watching" || !ytId) return;
+    let cancelled = false;
+
+    loadYouTubeIframeAPI().then((YT) => {
+      if (cancelled || !playerElRef.current) return;
+      playerRef.current = new YT.Player(playerElRef.current, {
+        videoId: ytId,
+        playerVars: {
+          autoplay: 1,
+          controls: 1,
+          playsinline: 1,
+          rel: 0,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: (e) => { try { e.target.playVideo(); } catch {} },
+          onStateChange: (e) => {
+            const s = e.data; // YT.PlayerState: -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering
+            if (s === 1 || s === 3)      setTimerRunning(true);
+            else if (s === 2 || s === 0) setTimerRunning(false);
+          },
+        },
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      try { playerRef.current?.destroy?.(); } catch {}
+      playerRef.current = null;
     };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [phase]);
+  }, [phase, ytId]);
 
   // Timer — performance.now() deltas every 250ms
   useEffect(() => {
@@ -1210,7 +1217,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         if (next >= duration && !doneRef.current) {
           doneRef.current = true;
           clearInterval(intervalRef.current);
-          ytCmd("stopVideo"); // stop the video when time is up
+          try { playerRef.current?.stopVideo(); } catch {} // stop the video when time is up
           onComplete(t.id).then(() => setPhase("done")).catch(() => {});
           return duration;
         }
@@ -1248,15 +1255,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         {ytId ? (
           <div style={{ borderRadius:16, overflow:"hidden", marginBottom:14, background:"#000" }}>
             {phase === "watching" ? (
-              <iframe
-                ref={iframeRef}
-                width="100%"
-                src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&enablejsapi=1&playsinline=1&rel=0&origin=${encodeURIComponent(window.location.origin)}`}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                onLoad={handleIframeLoad}
-                style={{ border:"none", display:"block", width:"100%", height:215 }}
-              />
+              <div ref={playerElRef} style={{ width:"100%", height:215 }} />
             ) : (
               <div style={{ height:215, background:`url(https://img.youtube.com/vi/${ytId}/hqdefault.jpg) center/cover no-repeat`, display:"flex", alignItems:"center", justifyContent:"center", borderRadius:16 }}>
                 <div style={{ width:66, height:66, borderRadius:"50%", background:"rgba(255,0,0,0.88)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 18px rgba(0,0,0,0.35)" }}>
