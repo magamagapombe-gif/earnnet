@@ -116,53 +116,14 @@ serve(async (req) => {
         .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
         .eq("id", deposit.id);
 
-      // ── Activation + referral bonus ───────────────────────────
-      // Gated on deposit.purpose === 'activation' — the explicit signal
-      // set when the payment was initiated — rather than guessing from
-      // "does this user have some pending activation_requests row?".
-      // That old approach could both false-negative (multiple pending
-      // rows breaking .single()) and false-positive (an unrelated
-      // ordinary top-up made while a request happened to be pending).
-      // The activation_requests row is still looked up here, but only
-      // to close it out for admin visibility — not to decide anything.
+      // ── Activation ─────────────────────────────────────────────
+      // NOTE: Activation intentionally grants NO monetary reward of any
+      // kind — no wallet credit (handled above) and no referral bonus.
+      // Paying the activation fee only flips `profiles.activated` and
+      // closes out the matching activation_requests row. Referral
+      // bonuses, if/when reintroduced, must be tied to a real wallet
+      // deposit event, never to this activation branch.
       if (isActivation) {
-        // Load referral bonus amount from settings
-        const { data: settingsRows } = await supabase.from("settings").select("*");
-        const s = Object.fromEntries((settingsRows ?? []).map((r: any) => [r.key, r.value]));
-        const refBonus = parseInt(s.ref1_rate ?? "3000");
-
-        // Get who referred this user
-        const { data: userProfile } = await supabase
-          .from("profiles")
-          .select("referred_by, name")
-          .eq("id", deposit.user_id)
-          .single();
-
-        if (userProfile?.referred_by) {
-          // Credit referrer (direct increment)
-          const { data: refProfile } = await supabase
-            .from("profiles")
-            .select("balance")
-            .eq("id", userProfile.referred_by)
-            .single();
-
-          await supabase
-            .from("profiles")
-            .update({ balance: (refProfile?.balance ?? 0) + refBonus })
-            .eq("id", userProfile.referred_by);
-
-          // Log referral transaction
-          await supabase.from("transactions").insert({
-            user_id:     userProfile.referred_by,
-            amount:      refBonus,
-            type:        "referral",
-            description: `Referral bonus — ${userProfile.name} activated`,
-            created_at:  new Date().toISOString(),
-          });
-
-          console.log(`✅ Referral bonus ${refBonus} UGX credited to ${userProfile.referred_by}`);
-        }
-
         // Mark user as activated and close activation request
         await supabase
           .from("profiles")
