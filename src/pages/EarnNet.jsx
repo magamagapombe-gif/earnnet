@@ -138,6 +138,28 @@ function getTaskEarningInfo(investments) {
   };
 }
 
+// Shows the reward the NEXT task completion will actually pay — once,
+// clearly labeled — instead of stamping that same number onto every task
+// card. Which plan absorbs a completion (and therefore what it pays) is
+// decided server-side per completion, not per task, so every task in the
+// list genuinely does pay the same amount right now; repeating that
+// number on each card just made it look like a bug. This banner says it
+// once and explains why it updates as the day's quota gets used up.
+function NextRewardBanner({ earningInfo, dark }) {
+  if (!earningInfo) return null;
+  return (
+    <div style={{ margin:"12px 16px 0", background: dark ? "#142e20" : "#E1F5EE", borderRadius:12, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div style={{ fontSize:12, color:BRAND_DARK }}>
+        <strong>{earningInfo.tasksRemainingToday} of {earningInfo.totalDailyTasks} tasks</strong> left today
+        {earningInfo.nextReward != null && <> · next pays <strong>{fmt(earningInfo.nextReward)}</strong></>}
+      </div>
+      <span style={{ background:BRAND, color:"white", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>
+        {earningInfo.plansCount} plan{earningInfo.plansCount !== 1 ? "s" : ""} active
+      </span>
+    </div>
+  );
+}
+
 
 // ── Dark mode context ──────────────────────────────────────────
 function useDarkMode() {
@@ -1986,7 +2008,6 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
   const T = theme(dark);
   const tierInfo    = getActiveTier(investments);
   const earningInfo = getTaskEarningInfo(investments);
-  const tasksWithReward = tasks.map(t => ({ ...t, reward: earningInfo?.nextReward ?? t.reward }));
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
@@ -2061,8 +2082,9 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
           <span style={{ fontWeight:600, fontSize:15, color:T.text }}>Available tasks</span>
           <button style={{ background:"none", border:"none", color:BRAND, fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onGoTasks}>See all →</button>
         </div>
-        {tasksWithReward.slice(0, 3).map(t => <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} compact dark={dark} />)}
-        {tasksWithReward.length === 0 && <div style={{ color:T.textSub, fontSize:13, textAlign:"center", padding:24 }}>All tasks done! Check back soon 🎉</div>}
+        <NextRewardBanner earningInfo={earningInfo} dark={dark} />
+        {tasks.slice(0, 3).map(t => <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} compact dark={dark} />)}
+        {tasks.length === 0 && <div style={{ color:T.textSub, fontSize:13, textAlign:"center", padding:24 }}>All tasks done! Check back soon 🎉</div>}
       </div>
     </div>
   );
@@ -2124,15 +2146,16 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
   // Filter tasks by plan access — a task's min_plan_level (if set) must be
   // <= the user's active plan level. legend_only is kept as a shorthand for
   // min_plan_level 16 so existing tasks created before this field existed
-  // keep working unchanged. Reward is injected per-task from whichever
-  // active plan will actually absorb the next completion.
+  // keep working unchanged. The actual reward for whichever task is
+  // completed next is shown once, in NextRewardBanner above — not
+  // stamped onto every card — since it's decided by which plan absorbs
+  // the completion, not by the specific task.
   const userLevel = tierInfo?.level ?? 0;
   const accessibleTasks = tasks
     .filter(t => {
       const required = t.subtype === "legend_only" ? 16 : (t.min_plan_level ?? 1);
       return userLevel >= required;
-    })
-    .map(t => ({ ...t, reward: earningInfo?.nextReward ?? t.reward }));
+    });
 
   const categories = ["all", ...new Set(accessibleTasks.map(t => t.category).filter(Boolean))];
   const filtered   = filter === "all" ? accessibleTasks : accessibleTasks.filter(t => t.category === filter);
@@ -2140,17 +2163,7 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
       {/* Daily limit banner — aggregated across every active plan */}
-      {earningInfo && (
-        <div style={{ margin:"12px 16px 0", background: dark ? "#142e20" : "#E1F5EE", borderRadius:12, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div style={{ fontSize:12, color:BRAND_DARK }}>
-            <strong>{earningInfo.tasksRemainingToday} of {earningInfo.totalDailyTasks} tasks</strong> left today
-            {earningInfo.nextReward != null && <> · next pays <strong>{fmt(earningInfo.nextReward)}</strong></>}
-          </div>
-          <span style={{ background:BRAND, color:"white", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>
-            {earningInfo.plansCount} plan{earningInfo.plansCount !== 1 ? "s" : ""} active
-          </span>
-        </div>
-      )}
+      <NextRewardBanner earningInfo={earningInfo} dark={dark} />
       <div style={{ padding:"12px 16px 12px" }}>
         <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 }}>
           {categories.map(c => (
