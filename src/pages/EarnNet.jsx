@@ -733,9 +733,9 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     } catch (e) { showToast(e.message ?? "Could not complete task", "error"); }
   };
 
-  const handleWithdraw = async ({ amount, method, phone }) => {
+  const handleWithdraw = async ({ amount, method, phone, bucket }) => {
     try {
-      await requestWithdrawal(uid, parseInt(amount), method, phone);
+      await requestWithdrawal(uid, parseInt(amount), method, phone, bucket);
       showToast("Withdrawal request submitted ✓");
       setWithdrawModal(false);
       await Promise.all([refreshProfile(), loadWallet()]);
@@ -3399,7 +3399,17 @@ function ExtendModal({ investment: inv, userId, onClose, onSuccess, dark }) {
 }
 
 // ── Withdraw Modal ─────────────────────────────────────────────
+// Only referral commissions and earnings (task rewards + monthly plan
+// profit) can ever be cashed out. Principal is reinvest-only (see
+// ReinvestModal) and raw deposits aren't withdrawable at all — the
+// backend enforces this too (deduct_for_withdrawal rejects 'principal'
+// and 'deposits'), this is just keeping the UI from offering a path
+// that would fail server-side anyway.
 function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
+  const referralBal = profile?.balance_referral ?? 0;
+  const earningsBal = profile?.balance_earnings ?? 0;
+
+  const [bucket, setBucket]   = useState(earningsBal > 0 ? "earnings" : "referral");
   const [amount, setAmount]   = useState("");
   const [phone, setPhone]     = useState(profile?.phone ?? "");
   const [method, setMethod]   = useState(detectMethod(profile?.phone));
@@ -3408,7 +3418,7 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
   const T = theme(dark);
   const min = parseInt(settings.min_withdrawal ?? 1000);
   const max = parseInt(settings.max_withdrawal ?? 1000000);
-  const bal = profile?.balance ?? 0;
+  const bucketBal = bucket === "referral" ? referralBal : earningsBal;
 
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
@@ -3421,10 +3431,10 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
     if (hour < 7 || hour >= 19) return setErr("Withdrawals are only processed between 7:00 AM and 7:00 PM. Try again during business hours.");
     if (!amt || amt < min) return setErr(`Minimum withdrawal is ${fmt(min)}`);
     if (amt > max)         return setErr(`Maximum is ${fmt(max)}`);
-    if (amt > bal)         return setErr("Insufficient balance");
+    if (amt > bucketBal)   return setErr(`Insufficient ${bucket} balance`);
     if (!phone)            return setErr("Enter your mobile money number");
     setLoading(true);
-    await onSubmit({ amount: amt, method, phone });
+    await onSubmit({ amount: amt, method, phone, bucket });
     setLoading(false);
   };
 
@@ -3435,9 +3445,32 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
           <div style={{ fontWeight:700, fontSize:18, color:T.text }}>Withdraw funds</div>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:T.textSub }}>×</button>
         </div>
-        <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:13, color:BRAND_DARK, marginBottom:18 }}>Balance: <strong>{fmt(bal)}</strong></div>
-        {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:4 }}>{err}</div>}
-        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:4 }}>Amount (UGX)</label>
+        {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+
+        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Withdraw from</label>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
+          {[
+            ["earnings", "💰 Earnings", "Task rewards + monthly plan profit", earningsBal],
+            ["referral", "👥 Referral", "Commissions from your team", referralBal],
+          ].map(([key, label, desc, bal]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setBucket(key)}
+              style={{
+                textAlign:"left", padding:"12px 14px", borderRadius:12, cursor:"pointer",
+                border: bucket === key ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
+                background: bucket === key ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+              }}
+            >
+              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{label}</div>
+              <div style={{ fontSize:10, color:T.textSub, marginTop:2, lineHeight:1.4 }}>{desc}</div>
+              <div style={{ fontSize:13, fontWeight:700, color:BRAND_DARK, marginTop:6 }}>{fmt(bal)}</div>
+            </button>
+          ))}
+        </div>
+
+        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Amount (UGX)</label>
         <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(min)}`} value={amount} onChange={e => setAmount(e.target.value)} />
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Method</label>
         <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
@@ -3449,7 +3482,9 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
         <button style={{ ...S.primaryBtn, marginTop:14, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
           {loading ? "Submitting..." : "Request withdrawal →"}
         </button>
-        <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>💡 Withdrawals available 7:00 AM – 7:00 PM daily.</p>
+        <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>
+          💡 Withdrawals available 7:00 AM – 7:00 PM daily. Principal and deposits can't be withdrawn — reinvest them into a plan instead.
+        </p>
       </div>
     </div>
   );

@@ -117,7 +117,10 @@ export async function getTransactions(userId, limit = 20) {
 
 // ── Withdrawals (via LivePay Edge Function) ────────────────────
 
-export async function requestWithdrawal(userId, amount, method, phone) {
+// bucket must be 'referral' or 'earnings' — principal and deposits are
+// no longer withdrawable (enforced server-side in deduct_for_withdrawal,
+// which the livepay-payment edge function calls with this same bucket).
+export async function requestWithdrawal(userId, amount, method, phone, bucket) {
   const { data: { session } } = await supabase.auth.getSession();
   const res = await fetch(
     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/livepay-payment`,
@@ -127,7 +130,7 @@ export async function requestWithdrawal(userId, amount, method, phone) {
         "Content-Type":  "application/json",
         "Authorization": `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ action: "withdraw", userId, amount, method, phone }),
+      body: JSON.stringify({ action: "withdraw", userId, amount, method, phone, bucket }),
     }
   );
   const data = await res.json();
