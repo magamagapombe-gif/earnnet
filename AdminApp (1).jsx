@@ -218,7 +218,7 @@ export default function AdminApp() {
         subtype: formData.subtype || null,
         link: formData.link || null,
         duration_seconds: parseInt(formData.duration_seconds) || 60,
-        icon: formData.icon, budget: parseInt(formData.budget),
+        icon: formData.icon,
         limit_count: parseInt(formData.limit), category: formData.type,
         color: "#E1F5EE", text_color: "#0F6E56", time_est: `${Math.ceil((parseInt(formData.duration_seconds)||60)/60)} min`,
       });
@@ -468,7 +468,6 @@ function TasksTab({ tasks, onToggle, onCreate }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         {tasks.map(t => {
-          const pct = t.budget > 0 ? Math.round((t.used / t.budget) * 100) : 0;
           return (
             <div key={t.id} style={A.card}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
@@ -478,7 +477,7 @@ function TasksTab({ tasks, onToggle, onCreate }) {
                 </div>
                 <span style={{ background: t.status === "active" ? "#E1F5EE" : t.status === "paused" ? "#FAEEDA" : "#f0f0f0", color: t.status === "active" ? "#0F6E56" : t.status === "paused" ? "#854F0B" : "#888", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 500 }}>{t.status}</span>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
                 <div style={{ background: "#f8f8f8", borderRadius: 8, padding: "8px 10px" }}>
                   <div style={{ fontSize: 10, color: "#888" }}>Reward</div>
                   <div style={{ fontWeight: 700, fontSize: 13, color: "#1D9E75" }}>By plan tier</div>
@@ -487,13 +486,6 @@ function TasksTab({ tasks, onToggle, onCreate }) {
                   <div style={{ fontSize: 10, color: "#888" }}>Completions</div>
                   <div style={{ fontWeight: 700, fontSize: 14 }}>{t.completions}/{t.limit_count}</div>
                 </div>
-                <div style={{ background: "#f8f8f8", borderRadius: 8, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 10, color: "#888" }}>Budget used</div>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{pct}%</div>
-                </div>
-              </div>
-              <div style={{ height: 6, background: "#eee", borderRadius: 3, marginBottom: 14 }}>
-                <div style={{ height: "100%", width: `${pct}%`, background: pct > 80 ? "#E24B4A" : "#1D9E75", borderRadius: 3 }} />
               </div>
               {t.status !== "completed" && (
                 <button onClick={() => onToggle(t.id, t.status)}
@@ -616,20 +608,33 @@ function SettingsTab({ settings, onSave }) {
 
 // ── Create Task Modal ─────────────────────────────────────────
 function CreateTaskModal({ onClose, onCreate, businesses }) {
-  const [form, setForm] = useState({ title: "", business: "", type: "youtube_watch", subtype: "", link: "", duration_seconds: 60, budget: "", limit: "", icon: "▶️" });
+  const [form, setForm] = useState({ title: "", business: "", type: "youtube_watch", subtype: "", link: "", duration_seconds: 60, limit: "", icon: "▶️" });
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const typeIcons = { youtube_watch: "▶️", youtube_subscribe: "📺", tiktok: "🎵", social: "📱", survey: "📋", install: "⬇️", review: "⭐" };
+  const typeIcons = { youtube_watch: "▶️", youtube_subscribe: "📺", tiktok: "🎵", website_visit: "🌐", social: "📱", survey: "📋", install: "⬇️", review: "⭐" };
+
+  // Types that need a link because there's nothing to do the task on without one
+  const linkRequiredTypes = ["youtube_watch", "youtube_subscribe", "tiktok", "website_visit", "survey", "review"];
+  // Types that run a dwell timer before the task can be marked complete
+  const timedTypes = ["youtube_watch", "youtube_subscribe", "tiktok", "website_visit"];
+
+  const linkLabels = {
+    youtube_watch: "YouTube video URL",
+    youtube_subscribe: "YouTube channel URL",
+    tiktok: "TikTok profile / video URL",
+    website_visit: "Website URL",
+    survey: "Survey URL",
+    review: "Page / listing URL to review",
+  };
 
   const handleCreate = async () => {
     setErr("");
     if (!form.title)    return setErr("Task title is required");
     if (!form.business) return setErr("Select a business");
-    if (!form.budget)   return setErr("Budget is required");
     if (!form.limit)    return setErr("Max completions is required");
-    if ((form.type === "youtube_watch" || form.type === "youtube_subscribe" || form.type === "tiktok") && !form.link)
+    if (linkRequiredTypes.includes(form.type) && !form.link)
       return setErr("Link is required for this task type");
     setLoading(true);
     try {
@@ -641,9 +646,10 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
     }
   };
 
-  const isTimed    = ["youtube_watch","youtube_subscribe","tiktok"].includes(form.type);
-  const isTiktok   = form.type === "tiktok";
-  const isLikeTask = form.type === "like_product" || form.type === "like_song";
+  const isTimed     = timedTypes.includes(form.type);
+  const needsLink    = linkRequiredTypes.includes(form.type);
+  const isTiktok    = form.type === "tiktok";
+  const isLikeTask  = form.type === "like_product" || form.type === "like_song";
 
   // Parse/set description JSON for like tasks
   const setMeta = (key, val) => {
@@ -672,6 +678,9 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
               </optgroup>
               <optgroup label="TikTok">
                 <option value="tiktok">🎵 TikTok</option>
+              </optgroup>
+              <optgroup label="Web">
+                <option value="website_visit">🌐 Website Visit</option>
               </optgroup>
               <optgroup label="Like / Rate">
                 <option value="like_product">🛍 Rate Product</option>
@@ -725,8 +734,8 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
             </select>
           </div>
 
-          {isTimed && (
-            <div style={{ gridColumn: "1/-1" }}><label style={A.label}>{form.type === "youtube_watch" ? "YouTube video URL" : form.type === "youtube_subscribe" ? "YouTube channel URL" : "TikTok profile / video URL"}</label>
+          {needsLink && (
+            <div style={{ gridColumn: "1/-1" }}><label style={A.label}>{linkLabels[form.type] ?? "Link"}</label>
               <input style={A.input} placeholder="https://..." value={form.link} onChange={e => set("link", e.target.value)} />
             </div>
           )}
@@ -738,10 +747,9 @@ function CreateTaskModal({ onClose, onCreate, businesses }) {
           )}
 
           <div style={{ gridColumn:"1/-1", background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:12, color:"#0F6E56" }}>
-            💡 Reward isn't set here — each user is paid their own active plan's per-task rate automatically when they complete this task. Budget below is just a spend ceiling.
+            💡 Reward isn't set here — each user is paid their own active plan's per-task rate automatically when they complete this task.
           </div>
-          <div><label style={A.label}>Total budget (UGX)</label><input style={A.input} type="number" placeholder="250000" value={form.budget} onChange={e => set("budget", e.target.value)} /></div>
-          <div><label style={A.label}>Max completions</label><input style={A.input} type="number" placeholder="500" value={form.limit} onChange={e => set("limit", e.target.value)} /></div>
+          <div style={{ gridColumn:"1/-1" }}><label style={A.label}>Max completions</label><input style={A.input} type="number" placeholder="500" value={form.limit} onChange={e => set("limit", e.target.value)} /></div>
         </div>
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button style={{ ...A.primaryBtn, flex: 1, padding: "12px 0", opacity: loading ? 0.7 : 1 }}
