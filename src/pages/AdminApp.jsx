@@ -1,6 +1,6 @@
 // src/pages/AdminApp.jsx  –  Admin panel wired to Supabase
 import { useState, useEffect } from "react";
-import { supabase, adminApproveWithdrawal, adminRejectWithdrawal, adminSuspendUser, adminVerifyBusiness, adminCreateTask, adminToggleTask, adminSaveSettings } from "../lib/supabase";
+import { supabase, adminApproveWithdrawal, adminRejectWithdrawal, adminSuspendUser, adminVerifyBusiness, adminCreateTask, adminToggleTask, adminSaveSettings, adminListKycSubmissions, adminGetKycDocumentUrl, adminApproveKyc, adminRejectKyc } from "../lib/supabase";
 
 const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
 
@@ -65,6 +65,7 @@ export default function AdminApp() {
   const [stats, setStats]       = useState({});
   const [investments, setInvestments] = useState([]);
   const [invPlans, setInvPlans] = useState([]);
+  const [kycSubmissions, setKycSubmissions] = useState([]);
   const [toast, setToast]       = useState(null);
   const [userSearch, setUserSearch] = useState("");
   const [taskModal, setTaskModal] = useState(false);
@@ -103,7 +104,7 @@ export default function AdminApp() {
 
   async function loadAll() {
     setLoading(true);
-    await Promise.all([loadUsers(), loadWithdrawals(), loadTasks(), loadBusinesses(), loadSettings(), loadStats(), loadInvestments()]);
+    await Promise.all([loadUsers(), loadWithdrawals(), loadTasks(), loadBusinesses(), loadSettings(), loadStats(), loadInvestments(), loadKyc()]);
     setLoading(false);
   }
 
@@ -118,6 +119,15 @@ export default function AdminApp() {
       .select("*")
       .order("level");
     setInvPlans(planData ?? []);
+  }
+
+  async function loadKyc() {
+    try {
+      const res = await adminListKycSubmissions(null); // null = all statuses, tab filters client-side
+      setKycSubmissions(res.data ?? []);
+    } catch (e) {
+      setKycSubmissions([]);
+    }
   }
 
   async function loadUsers() {
@@ -211,6 +221,29 @@ export default function AdminApp() {
     } catch (e) { showToast(e.message ?? "Save failed", "error"); }
   };
 
+  const handleApproveKyc = async (id) => {
+    try {
+      await adminApproveKyc(id);
+      showToast("KYC approved ✓");
+      loadKyc(); loadUsers();
+    } catch (e) { showToast(e.message, "error"); }
+  };
+
+  const handleRejectKyc = async (id, reason) => {
+    try {
+      await adminRejectKyc(id, reason);
+      showToast("KYC rejected");
+      loadKyc(); loadUsers();
+    } catch (e) { showToast(e.message, "error"); }
+  };
+
+  const handleViewKycDoc = async (id, side) => {
+    try {
+      const res = await adminGetKycDocumentUrl(id, side);
+      window.open(res.data.url, "_blank", "noopener,noreferrer");
+    } catch (e) { showToast(e.message, "error"); }
+  };
+
   const handleCreateTask = async (formData) => {
     try {
       await adminCreateTask({
@@ -234,6 +267,7 @@ export default function AdminApp() {
 
   const pendingCount    = withdrawals.filter(w => w.status === "pending").length;
   const unverifiedBiz   = businesses.filter(b => !b.verified).length;
+  const pendingKyc      = kycSubmissions.filter(k => k.status === "pending").length;
 
   if (!authed) return <AdminLogin onLogin={() => setAuthed(true)} />;
 
@@ -253,6 +287,7 @@ export default function AdminApp() {
             { id: "overview",    icon: "📊", label: "Overview" },
             { id: "users",       icon: "👥", label: "Users" },
             { id: "withdrawals", icon: "💸", label: "Withdrawals", badge: pendingCount },
+            { id: "kyc",         icon: "🪪", label: "KYC Review", badge: pendingKyc },
             { id: "tasks",       icon: "📋", label: "Tasks" },
             { id: "grow",        icon: "🌱", label: "Grow / Invest" },
             { id: "businesses",  icon: "🏢", label: "Businesses", badge: unverifiedBiz },
@@ -279,7 +314,7 @@ export default function AdminApp() {
         <div style={A.topbar}>
           <div style={{ fontWeight: 700, fontSize: 20 }}>
             {{ overview: "Dashboard Overview", users: "User Management", withdrawals: "Withdrawals",
-               tasks: "Task Management", grow: "Grow & Investment Plans", businesses: "Businesses", settings: "Settings" }[tab]}
+               kyc: "KYC Review", tasks: "Task Management", grow: "Grow & Investment Plans", businesses: "Businesses", settings: "Settings" }[tab]}
           </div>
           <div style={{ fontSize: 13, color: "#888" }}>{new Date().toDateString()}</div>
         </div>
@@ -292,6 +327,7 @@ export default function AdminApp() {
               {tab === "overview"    && <OverviewTab stats={stats} withdrawals={withdrawals} tasks={tasks} onApprove={handleApprove} />}
               {tab === "users"       && <UsersTab users={filteredUsers} search={userSearch} setSearch={setUserSearch} onSuspend={handleSuspendUser} />}
               {tab === "withdrawals" && <WithdrawalsTab withdrawals={withdrawals} onApprove={handleApprove} onReject={handleReject} />}
+              {tab === "kyc"         && <KycTab submissions={kycSubmissions} onApprove={handleApproveKyc} onReject={handleRejectKyc} onViewDoc={handleViewKycDoc} />}
               {tab === "tasks"       && <TasksTab tasks={tasks} onToggle={handleToggleTask} onCreate={() => setTaskModal(true)} />}
               {tab === "grow"        && <GrowAdminTab investments={investments} plans={invPlans} />}
               {tab === "businesses"  && <BusinessesTab businesses={businesses} onVerify={handleVerifyBusiness} />}
@@ -534,6 +570,78 @@ function BusinessesTab({ businesses, onVerify }) {
                 <td style={A.td}>{!b.verified && <button style={{ ...A.actionBtn, color: "#0F6E56", borderColor: "#0F6E56" }} onClick={() => onVerify(b.id)}>Verify</button>}</td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── KYC Review ────────────────────────────────────────────────
+function KycTab({ submissions, onApprove, onReject, onViewDoc }) {
+  const [filter, setFilter] = useState("pending");
+  const filtered = filter === "all" ? submissions : submissions.filter(s => s.status === filter);
+
+  const handleReject = (id) => {
+    const reason = window.prompt("Reason for rejection (shown to the user, optional):", "");
+    if (reason === null) return; // cancelled
+    onReject(id, reason || null);
+  };
+
+  const statusColors = { pending: "#FAEEDA:#854F0B", approved: "#E1F5EE:#0F6E56", rejected: "#FAECE7:#993C1D" };
+
+  return (
+    <div style={{ animation: "slideUp 0.3s ease" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {["pending", "approved", "rejected", "all"].map(f => (
+          <button key={f} onClick={() => setFilter(f)} style={{ ...A.chip, ...(filter === f ? A.chipActive : {}) }}>
+            {f[0].toUpperCase() + f.slice(1)}
+          </button>
+        ))}
+      </div>
+      <div style={A.card}>
+        <table style={A.table}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #f0f0f0" }}>
+              {["User", "ID Type", "Documents", "Submitted", "Status", "Actions"].map(h => (
+                <th key={h} style={A.th}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0
+              ? <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: "#aaa", fontSize: 13 }}>No {filter !== "all" ? filter : ""} KYC submissions</td></tr>
+              : filtered.map(s => {
+                const [bg, tc] = (statusColors[s.status] ?? "#eee:#888").split(":");
+                return (
+                  <tr key={s.id} style={{ borderBottom: "0.5px solid #f5f5f5" }}>
+                    <td style={A.td}>
+                      <div style={{ fontWeight: 500 }}>{s.profiles?.name ?? "—"}</div>
+                      <div style={{ fontSize: 11, color: "#888" }}>{s.profiles?.phone}</div>
+                    </td>
+                    <td style={A.td}><span style={{ fontSize: 12 }}>{s.id_type === "national_id" ? "National ID" : "Passport"}</span></td>
+                    <td style={A.td}>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button style={A.actionBtn} onClick={() => onViewDoc(s.id, "front")}>Front</button>
+                        <button style={A.actionBtn} onClick={() => onViewDoc(s.id, "back")}>Back</button>
+                      </div>
+                    </td>
+                    <td style={{ ...A.td, fontSize: 12, color: "#888" }}>{new Date(s.submitted_at).toLocaleString()}</td>
+                    <td style={A.td}>
+                      <span style={{ background: bg, color: tc, borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 600 }}>{s.status}</span>
+                    </td>
+                    <td style={A.td}>
+                      {s.status === "pending" && (
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button style={A.approveBtn} onClick={() => onApprove(s.id)}>Approve</button>
+                          <button style={{ ...A.actionBtn, color: "#E24B4A", borderColor: "#E24B4A" }} onClick={() => handleReject(s.id)}>Reject</button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            }
           </tbody>
         </table>
       </div>

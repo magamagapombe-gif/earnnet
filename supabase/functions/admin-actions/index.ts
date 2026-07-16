@@ -173,6 +173,117 @@ Deno.serve(async (req) => {
       result = { discredited: true };
     }
 
+    // ── List KYC submissions ─────────────────────────────────────
+    // ASSUMPTION: table `kyc_submissions` (id, user_id, document_path,
+    // status, submitted_at) joined to `profiles` for name/phone.
+    // Adjust column/table names below if yours differ.
+    else if (action === "list_kyc_submissions") {
+      let query = adminClient
+        .from("kyc_submissions")
+        .select("*, profiles(name, phone)")
+        .order("submitted_at", { ascending: false });
+      if (body.status) query = query.eq("status", body.status);
+      const { data, error } = await query;
+      if (error) throw error;
+      result = data;
+    }
+
+    // ── Get a signed URL for a KYC document ──────────────────────
+    // body.side must be 'front' or 'back' — matches front_path/back_path
+    // on kyc_submissions, both stored in the private `kyc-documents` bucket.
+    else if (action === "get_kyc_document_url") {
+      if (body.side !== "front" && body.side !== "back") {
+        throw new Error("side must be 'front' or 'back'");
+      }
+      const { data: sub, error: subErr } = await adminClient
+        .from("kyc_submissions")
+        .select("front_path, back_path")
+        .eq("id", body.submissionId)
+        .single();
+      if (subErr || !sub) throw new Error("KYC submission not found");
+
+      const path = body.side === "front" ? sub.front_path : sub.back_path;
+      const { data: signed, error: signErr } = await adminClient
+        .storage
+        .from("kyc-documents")
+        .createSignedUrl(path, 60 * 5); // 5 min expiry
+      if (signErr) throw signErr;
+      result = { url: signed.signedUrl };
+    }
+
+    // ── Approve KYC ───────────────────────────────────────────────
+    else if (action === "approve_kyc") {
+      const { data: sub, error: subErr } = await adminClient
+        .from("kyc_submissions")
+        .select("id, user_id, status")
+        .eq("id", body.submissionId)
+        .single();
+      if (subErr || !sub) throw new Error("KYC submission not found");
+      if (sub.status !== "pending") {
+        throw new Error(`KYC submission is already ${sub.status} — nothing to approve.`);
+      }
+
+      // NOTE: reviewed_at/reviewed_by are not columns confirmed to exist
+      // yet — add them via migration (see chat) or drop this block if
+      // you don't want that audit trail.
+      const { error: subUpErr } = await adminClient
+        .from("kyc_submissions")
+        .update({ status: "approved", reviewed_at: new Date().toISOString(), reviewed_by: user.id })
+        .eq("id", body.submissionId);
+      if (subUpErr) throw subUpErr;
+
+      // Keep both profile fields in sync — submitKyc() sets kyc_status
+      // to "pending", so it needs to move to "approved" here too, not
+      // just kyc_verified.
+      const { error: profUpErr } = await adminClient
+        .from("profiles")
+        .update({ kyc_verified: true, kyc_status: "approved" })
+        .eq("id", sub.user_id);
+      if (profUpErr) throw profUpErr;
+
+      result = { approved: true };
+    }
+
+    // ── Reject KYC ────────────────────────────────────────────────
+    else if (action === "reject_kyc") {
+      const { data: sub, error: subErr } = await adminClient
+        .from("kyc_submissions")
+        .select("id, status")
+        .eq("id", body.submissionId)
+        .single();
+      if (subErr || !sub) throw new Error("KYC submission not found");
+      if (sub.status !== "pending") {
+        throw new Error(`KYC submission is already ${sub.status} — nothing to reject.`);
+      }
+
+      const { data: subRow } = await adminClient
+        .from("kyc_submissions")
+        .select("user_id")
+        .eq("id", body.submissionId)
+        .single();
+
+      // Same audit-column caveat as approve_kyc above.
+      const { error: upErr } = await adminClient
+        .from("kyc_submissions")
+        .update({
+          status: "rejected",
+          reviewed_at: new Date().toISOString(),
+          reviewed_by: user.id,
+          rejection_reason: body.reason ?? null,
+        })
+        .eq("id", body.submissionId);
+      if (upErr) throw upErr;
+
+      // Reset kyc_status so submitKyc()'s "already under review" guard
+      // doesn't block the user's next attempt — submitKyc only blocks
+      // on status !== 'rejected', so this just needs to not say 'pending'.
+      if (subRow?.user_id) {
+        await adminClient.from("profiles").update({ kyc_status: "rejected" }).eq("id", subRow.user_id);
+      }
+
+      result = { rejected: true };
+    }
+
     else {
       throw new Error(`Unknown action: ${action}`);
     }
