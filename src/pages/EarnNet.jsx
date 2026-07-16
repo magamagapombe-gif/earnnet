@@ -654,6 +654,10 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [notifOpen, setNotifOpen]         = useState(false);
   const uid = session.user.id;
   const T   = theme(dark);
+  const readNotifKey = `earnnet_read_notifs_${uid}`;
+  const [readNotifIds, setReadNotifIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(readNotifKey) ?? "[]")); } catch { return new Set(); }
+  });
 
   // Derive notifications from transactions
   const notifications = txns.slice(0, 5).map(tx => ({
@@ -662,7 +666,15 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     title: tx.description ?? tx.type,
     amount: tx.amount,
     time: new Date(tx.created_at).toLocaleDateString(),
+    read: readNotifIds.has(tx.id),
   }));
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const markAllNotifsRead = () => {
+    const ids = new Set([...readNotifIds, ...notifications.map(n => n.id)]);
+    setReadNotifIds(ids);
+    try { localStorage.setItem(readNotifKey, JSON.stringify([...ids])); } catch {}
+  };
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -823,21 +835,28 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
           <div style={{ position:"relative" }}>
             <button onClick={() => setNotifOpen(o => !o)} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, width:32, height:32, cursor:"pointer", fontSize:16, color:T.text, display:"flex", alignItems:"center", justifyContent:"center", position:"relative" }}>
               🔔
-              {notifications.length > 0 && (
+              {unreadCount > 0 && (
                 <span style={{ position:"absolute", top:-4, right:-4, background:"#E24B4A", color:"white", fontSize:9, padding:"1px 5px", borderRadius:10, fontWeight:700 }}>
-                  {Math.min(notifications.length, 9)}
+                  {Math.min(unreadCount, 9)}
                 </span>
               )}
             </button>
             {notifOpen && (
               <div style={{ position:"absolute", right:0, top:"calc(100% + 8px)", width:280, background:T.notifBg, border:`0.5px solid ${T.border}`, borderRadius:16, boxShadow:"0 8px 24px rgba(0,0,0,0.15)", zIndex:200, overflow:"hidden" }}>
-                <div style={{ padding:"12px 14px 10px", borderBottom:`0.5px solid ${T.border}`, fontWeight:700, fontSize:13, color:T.text }}>Recent activity</div>
+                <div style={{ padding:"12px 14px 10px", borderBottom:`0.5px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontWeight:700, fontSize:13, color:T.text }}>Recent activity</span>
+                  <button onClick={markAllNotifsRead} disabled={unreadCount === 0}
+                    style={{ background:"none", border:"none", color: unreadCount === 0 ? T.textSub : BRAND, fontSize:11, fontWeight:600, cursor: unreadCount === 0 ? "default" : "pointer", padding:0 }}>
+                    Mark all as read
+                  </button>
+                </div>
                 {notifications.length === 0
                   ? <div style={{ padding:20, textAlign:"center", color:T.textSub, fontSize:13 }}>No activity yet</div>
                   : notifications.map(n => (
-                      <div key={n.id} style={{ padding:"10px 14px", borderBottom:`0.5px solid ${T.border}`, background:T.notifBg, cursor:"default" }}>
+                      <div key={n.id} style={{ padding:"10px 14px", borderBottom:`0.5px solid ${T.border}`, background:T.notifBg, cursor:"default", opacity: n.read ? 0.6 : 1 }}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                            {!n.read && <span style={{ width:6, height:6, borderRadius:"50%", background:BRAND, flexShrink:0 }} />}
                             <span style={{ fontSize:18 }}>{n.icon}</span>
                             <div>
                               <div style={{ fontSize:12, fontWeight:600, color:T.text }}>{n.title}</div>
@@ -1575,6 +1594,53 @@ function YoutubeSubscribeTask({ task: t, profile, onBack, onComplete, dark }) {
   );
 }
 
+// ── Photo upload field (camera or gallery) ──────────────────────
+// A plain <input type="file" accept="image/*"> alone works on most
+// mobile browsers (they show a chooser with Camera / Photos / Files),
+// but not reliably on all of them, and offers no explicit camera
+// affordance on desktop webcams. Give two explicit, always-visible
+// entry points instead: one input with capture="environment" that
+// opens the camera directly, and one plain input that opens the
+// gallery/file picker — so someone with no photos already on their
+// phone can still complete the upload by snapping one.
+function PhotoUploadField({ data, name, onPick, dark, compact }) {
+  const T = theme(dark);
+  const cameraRef  = useRef(null);
+  const galleryRef = useRef(null);
+  const pad = compact ? "18px" : "24px";
+  return (
+    <div>
+      <div style={{ border:`2px dashed ${data ? BRAND : T.border}`, borderRadius:12, padding:pad, textAlign:"center", background: data ? "#E1F5EE" : T.bg }}>
+        {data ? (
+          <div>
+            <div style={{ fontSize: compact ? 26 : 32, marginBottom:6 }}>✅</div>
+            <div style={{ fontSize: compact ? 12 : 13, color:BRAND_DARK, fontWeight:600, wordBreak:"break-all" }}>{name}</div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize: compact ? 26 : 32, marginBottom:6 }}>📷</div>
+            <div style={{ fontSize: compact ? 12 : 13, color:T.textSub }}>No photo selected yet</div>
+          </div>
+        )}
+        <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"center" }}>
+          <button type="button" onClick={() => cameraRef.current?.click()}
+            style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"9px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            📷 Take photo
+          </button>
+          <button type="button" onClick={() => galleryRef.current?.click()}
+            style={{ background: dark ? "#1a4030" : "#E1F5EE", color:BRAND_DARK, border:"none", borderRadius:10, padding:"9px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            🖼️ Choose from gallery
+          </button>
+        </div>
+      </div>
+      {/* Direct-to-camera input, for when the user has no photos saved yet */}
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
+      {/* Regular gallery/file picker */}
+      <input ref={galleryRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
+    </div>
+  );
+}
+
 // ── TikTok Task (Follow / Like / Watch / Comment) ──────────────
 function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
   const T        = theme(dark);
@@ -1617,8 +1683,7 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
     onBack();
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
+  const handleFileChange = (file) => {
     if (!file) return;
     setProofName(file.name);
     const reader = new FileReader();
@@ -1676,21 +1741,7 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
               Take a screenshot showing you {actionLabel.toLowerCase()}ed on TikTok and upload it below.
             </div>
             {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:8, padding:"10px 12px", fontSize:12, marginBottom:12 }}>{err}</div>}
-            <label style={{ display:"block", border:`2px dashed ${proof ? BRAND : T.border}`, borderRadius:12, padding:"24px", textAlign:"center", cursor:"pointer", background: proof ? "#E1F5EE" : T.bg }}>
-              <input type="file" accept="image/*" style={{ display:"none" }} onChange={handleFileChange} />
-              {proof ? (
-                <div>
-                  <div style={{ fontSize:32, marginBottom:8 }}>✅</div>
-                  <div style={{ fontSize:13, color:BRAND_DARK, fontWeight:600 }}>{proofName}</div>
-                  <div style={{ fontSize:11, color:T.textSub, marginTop:4 }}>Tap to change</div>
-                </div>
-              ) : (
-                <div>
-                  <div style={{ fontSize:32, marginBottom:8 }}>📷</div>
-                  <div style={{ fontSize:13, color:T.textSub }}>Tap to upload screenshot</div>
-                </div>
-              )}
-            </label>
+            <PhotoUploadField data={proof} name={proofName} onPick={handleFileChange} dark={dark} />
           </div>
         )}
 
@@ -2273,10 +2324,9 @@ function EarningsChart({ txns, dark }) {
 }
 
 // ── Home Tab ───────────────────────────────────────────────────
-function HomeTab({ profile, tasks, settings, kycSubmission, onStartKyc, onGoTasks, onWithdraw, onDeposit, onActivate, onSelectTask, txns, onGoGrow, investments, referrals, dark }) {
+function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWithdraw, onDeposit, onActivate, txns, onGoGrow, investments, referrals, dark }) {
   const T = theme(dark);
   const tierInfo    = getActiveTier(investments);
-  const earningInfo = getTaskEarningInfo(investments);
   const kycStatus   = profile?.kyc_status ?? kycSubmission?.status ?? "none";
   const kycApproved = kycStatus === "approved";
 
@@ -2340,15 +2390,6 @@ function HomeTab({ profile, tasks, settings, kycSubmission, onStartKyc, onGoTask
         ))}
       </div>
 
-      <div style={{ margin:"0 16px" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-          <span style={{ fontWeight:600, fontSize:15, color:T.text }}>Available tasks</span>
-          <button style={{ background:"none", border:"none", color:BRAND, fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onGoTasks}>See all →</button>
-        </div>
-        <NextRewardBanner earningInfo={earningInfo} dark={dark} />
-        {tasks.slice(0, 3).map(t => <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} compact dark={dark} />)}
-        {tasks.length === 0 && <div style={{ color:T.textSub, fontSize:13, textAlign:"center", padding:24 }}>All tasks done! Check back soon 🎉</div>}
-      </div>
     </div>
   );
 }
@@ -2420,8 +2461,16 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
       return userLevel >= required;
     });
 
-  const categories = ["all", ...new Set(accessibleTasks.map(t => t.category).filter(Boolean))];
-  const filtered   = filter === "all" ? accessibleTasks : accessibleTasks.filter(t => t.category === filter);
+  // Only ever show as many task cards as the user's active plan(s) can
+  // still pay out today — e.g. a single Beginner plan (1 daily task)
+  // should show exactly 1 task, not the whole catalog. Once a task is
+  // completed, tasksRemainingToday drops and the next refresh shows
+  // one fewer card, until the "all done for today" screen above takes over.
+  const dailyQuota = earningInfo?.tasksRemainingToday ?? accessibleTasks.length;
+  const quotaTasks = accessibleTasks.slice(0, dailyQuota);
+
+  const categories = ["all", ...new Set(quotaTasks.map(t => t.category).filter(Boolean))];
+  const filtered   = filter === "all" ? quotaTasks : quotaTasks.filter(t => t.category === filter);
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
@@ -2573,12 +2622,17 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
         </div>
       </div>
 
-      <div style={{ display:"flex", gap:8, padding:"0 16px 16px" }}>
-        {["transactions","withdrawals","deposits"].map(v => (
-          <button key={v} onClick={() => setView(v)} style={{ padding:"7px 16px", borderRadius:20, border:`0.5px solid ${view === v ? BRAND : T.chipBrd}`, background: view === v ? BRAND : T.chipBg, color: view === v ? "white" : T.text, fontSize:12, cursor:"pointer", whiteSpace:"nowrap", fontWeight: view === v ? 600 : 400 }}>
-            {v.charAt(0).toUpperCase() + v.slice(1)}
-          </button>
-        ))}
+      <div style={{ padding:"0 16px 16px" }}>
+        <div style={{ fontWeight:600, fontSize:14, marginBottom:8, color:T.text }}>Transaction history</div>
+        <select
+          value={view}
+          onChange={e => setView(e.target.value)}
+          style={{ width:"100%", padding:"11px 14px", borderRadius:12, border:`0.5px solid ${T.chipBrd}`, background:T.chipBg, color:T.text, fontSize:13, fontWeight:600, cursor:"pointer", appearance:"none", WebkitAppearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%231D9E75' stroke-width='2' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center" }}
+        >
+          <option value="transactions">Transactions ({txns.length})</option>
+          <option value="withdrawals">Withdrawals ({withdrawals.length})</option>
+          <option value="deposits">Deposits ({deposits.length})</option>
+        </select>
       </div>
 
       <div style={{ padding:"0 16px" }}>
@@ -3601,21 +3655,7 @@ function KycModal({ kycSubmission, onClose, onSubmit, dark }) {
   const UploadBox = ({ label, data, name, onPick }) => (
     <div style={{ marginBottom:14 }}>
       <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>{label}</label>
-      <label style={{ display:"block", border:`2px dashed ${data ? BRAND : T.border}`, borderRadius:12, padding:"18px", textAlign:"center", cursor:"pointer", background: data ? "#E1F5EE" : T.bg }}>
-        <input type="file" accept="image/*" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
-        {data ? (
-          <div>
-            <div style={{ fontSize:26, marginBottom:4 }}>✅</div>
-            <div style={{ fontSize:12, color:BRAND_DARK, fontWeight:600 }}>{name}</div>
-            <div style={{ fontSize:10, color:T.textSub, marginTop:2 }}>Tap to change</div>
-          </div>
-        ) : (
-          <div>
-            <div style={{ fontSize:26, marginBottom:4 }}>📷</div>
-            <div style={{ fontSize:12, color:T.textSub }}>Tap to upload photo</div>
-          </div>
-        )}
-      </label>
+      <PhotoUploadField data={data} name={name} onPick={onPick} dark={dark} compact />
     </div>
   );
 
