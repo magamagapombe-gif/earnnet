@@ -697,7 +697,20 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   }, [uid]);
 
   const loadKyc = useCallback(async () => {
-    try { setKycSubmission(await getKycStatus(uid)); } catch {}
+    try {
+      const k = await getKycStatus(uid);
+      setKycSubmission(k);
+      // One-time celebratory toast the first time we see an approved
+      // submission — flagged per-submission id so it doesn't repeat
+      // on every reload.
+      if (k?.status === "approved") {
+        const seenKey = `earnnet_kyc_seen_${k.id}`;
+        if (!localStorage.getItem(seenKey)) {
+          localStorage.setItem(seenKey, "1");
+          showToast("🎉 Your ID is verified — you can now withdraw!");
+        }
+      }
+    } catch {}
   }, [uid]);
 
   // Only re-run when uid changes, not on every callback recreation
@@ -852,12 +865,12 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       </div>
 
       <main style={{ flex:1, overflowY:"auto", paddingTop:4 }}>
-        {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} referrals={referrals} dark={dark} />}
+        {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} kycSubmission={kycSubmission} onStartKyc={() => setKycModal(true)} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} referrals={referrals} dark={dark} />}
         {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} investments={investments} onGoGrow={() => setTab("grow")} dark={dark} />}
         {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={VAULT_PLANS} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onRefresh={async () => { await Promise.all([loadInvestments(), refreshProfile()]); }} dark={dark} />}
         {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
         {tab === "referral" && <ReferralTab profile={profile} referrals={referrals} settings={settings} dark={dark} />}
-        {tab === "profile"  && <ProfileTab  profile={profile} investments={investments} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
+        {tab === "profile"  && <ProfileTab  profile={profile} investments={investments} kycSubmission={kycSubmission} onStartKyc={() => setKycModal(true)} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
       </main>
 
       {/* Bottom nav */}
@@ -2260,13 +2273,24 @@ function EarningsChart({ txns, dark }) {
 }
 
 // ── Home Tab ───────────────────────────────────────────────────
-function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, onActivate, onSelectTask, txns, onGoGrow, investments, referrals, dark }) {
+function HomeTab({ profile, tasks, settings, kycSubmission, onStartKyc, onGoTasks, onWithdraw, onDeposit, onActivate, onSelectTask, txns, onGoGrow, investments, referrals, dark }) {
   const T = theme(dark);
   const tierInfo    = getActiveTier(investments);
   const earningInfo = getTaskEarningInfo(investments);
+  const kycStatus   = profile?.kyc_status ?? kycSubmission?.status ?? "none";
+  const kycApproved = kycStatus === "approved";
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
+      {profile?.activated && !kycApproved && kycStatus !== "pending" && (
+        <div style={{ margin:"12px 16px 0", background:"linear-gradient(135deg,#FFF7E6,#fef3e2)", borderRadius:14, padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onStartKyc}>
+          <div>
+            <div style={{ fontWeight:700, fontSize:14, color:"#854F0B" }}>🪪 Verify your ID</div>
+            <div style={{ fontSize:12, color:"#a0611a", marginTop:2 }}>Required before your first withdrawal</div>
+          </div>
+          <button style={{ background:"#854F0B", color:"white", border:"none", borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>Verify →</button>
+        </div>
+      )}
       {!profile?.activated && (
         <div style={{ margin:"12px 16px 0", background:`linear-gradient(135deg,#FAEEDA,#fef3e2)`, borderRadius:14, padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onActivate}>
           <div>
@@ -3456,6 +3480,28 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
         </div>
         {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
+        {!kycApproved && (
+          <div style={{ background:"#FFF7E6", border:"1px solid #FCD9A0", borderRadius:14, padding:"18px 16px", textAlign:"center" }}>
+            <div style={{ fontSize:30, marginBottom:8 }}>🪪</div>
+            <div style={{ fontWeight:700, fontSize:14, color:"#854F0B", marginBottom:4 }}>
+              {kycStatus === "pending" ? "ID verification pending" : kycStatus === "rejected" ? "ID verification rejected" : "Verify your ID to withdraw"}
+            </div>
+            <div style={{ fontSize:12, color:"#a0611a", marginBottom:14, lineHeight:1.6 }}>
+              {kycStatus === "pending"
+                ? "We're reviewing your documents. This usually takes a few hours — you'll be notified here once approved."
+                : kycStatus === "rejected"
+                ? (kycSubmission?.rejection_reason ? `Reason: ${kycSubmission.rejection_reason}. Please resubmit clearer photos.` : "Your submission was rejected. Please resubmit clearer photos of your ID.")
+                : "For your security, we require a one-time ID verification before your first withdrawal."}
+            </div>
+            {kycStatus !== "pending" && (
+              <button style={{ background:"#854F0B", color:"white", border:"none", borderRadius:10, padding:"11px 22px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onStartKyc}>
+                {kycStatus === "rejected" ? "Resubmit ID →" : "Verify ID now →"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {kycApproved && <>
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Withdraw from</label>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
           {[
@@ -3510,6 +3556,121 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
         <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>
           💡 Withdrawals available 7:00 AM – 7:00 PM daily. Principal and deposits can't be withdrawn — reinvest them into a plan instead.
         </p>
+        </>}
+      </div>
+    </div>
+  );
+}
+
+// ── KYC Modal ──────────────────────────────────────────────────
+// One-time ID verification: front + back of a national ID or
+// passport. Photos go to submitKyc() -> private 'kyc-documents'
+// storage bucket, and a kyc_submissions row is queued for admin
+// review (see AdminApp's KycTab -> approve_kyc/reject_kyc).
+function KycModal({ kycSubmission, onClose, onSubmit, dark }) {
+  const T = theme(dark);
+  const status = kycSubmission?.status ?? "none";
+  const [idType, setIdType] = useState(kycSubmission?.id_type ?? "national_id");
+  const [front, setFront]   = useState(null);
+  const [back, setBack]     = useState(null);
+  const [frontName, setFrontName] = useState("");
+  const [backName, setBackName]   = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const readFile = (file, setData, setName) => {
+    if (!file) return;
+    setName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setData(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = async () => {
+    setErr("");
+    if (!front || !back) return setErr("Please upload both the front and back of your ID");
+    setLoading(true);
+    try {
+      await onSubmit({ idType, front, back });
+    } catch (e) {
+      setErr(e.message ?? "Submission failed");
+      setLoading(false);
+    }
+  };
+
+  const UploadBox = ({ label, data, name, onPick }) => (
+    <div style={{ marginBottom:14 }}>
+      <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>{label}</label>
+      <label style={{ display:"block", border:`2px dashed ${data ? BRAND : T.border}`, borderRadius:12, padding:"18px", textAlign:"center", cursor:"pointer", background: data ? "#E1F5EE" : T.bg }}>
+        <input type="file" accept="image/*" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
+        {data ? (
+          <div>
+            <div style={{ fontSize:26, marginBottom:4 }}>✅</div>
+            <div style={{ fontSize:12, color:BRAND_DARK, fontWeight:600 }}>{name}</div>
+            <div style={{ fontSize:10, color:T.textSub, marginTop:2 }}>Tap to change</div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize:26, marginBottom:4 }}>📷</div>
+            <div style={{ fontSize:12, color:T.textSub }}>Tap to upload photo</div>
+          </div>
+        )}
+      </label>
+    </div>
+  );
+
+  // Already pending or approved — nothing to submit, just show status.
+  if (status === "pending" || status === "approved") {
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"28px 20px 40px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
+          <div style={{ fontSize:40, marginBottom:10 }}>{status === "approved" ? "✅" : "⏳"}</div>
+          <div style={{ fontWeight:700, fontSize:16, color:T.text, marginBottom:6 }}>
+            {status === "approved" ? "Your ID is verified" : "Verification in progress"}
+          </div>
+          <div style={{ fontSize:13, color:T.textSub, marginBottom:20, lineHeight:1.6 }}>
+            {status === "approved" ? "You're all set — you can withdraw anytime." : "We're reviewing your documents. This usually takes a few hours."}
+          </div>
+          <button style={{ ...S.primaryBtn, padding:"13px 0" }} onClick={onClose}>Close</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"24px 20px 36px", width:"100%", maxWidth:480, maxHeight:"88vh", overflowY:"auto", animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+          <div style={{ fontWeight:700, fontSize:18, color:T.text }}>Verify your ID</div>
+          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:T.textSub }}>×</button>
+        </div>
+        <div style={{ fontSize:12, color:T.textSub, marginBottom:16, lineHeight:1.5 }}>
+          Required once before your first withdrawal. Your documents are stored securely and only reviewed by our team.
+        </div>
+
+        {status === "rejected" && (
+          <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:12, marginBottom:14 }}>
+            Your last submission was rejected{kycSubmission?.rejection_reason ? `: ${kycSubmission.rejection_reason}` : "."} Please try again with clearer photos.
+          </div>
+        )}
+        {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+
+        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>ID type</label>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
+          {[["national_id","🪪 National ID"],["passport","📔 Passport"]].map(([key,label]) => (
+            <button key={key} onClick={() => setIdType(key)}
+              style={{ padding:"12px 10px", borderRadius:10, border:`1.5px solid ${idType === key ? BRAND : T.border}`, background: idType === key ? "#E1F5EE" : T.bg, color: idType === key ? BRAND_DARK : T.text, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <UploadBox label="Front of ID" data={front} name={frontName} onPick={f => readFile(f, setFront, setFrontName)} />
+        <UploadBox label="Back of ID" data={back} name={backName} onPick={f => readFile(f, setBack, setBackName)} />
+
+        <button style={{ ...S.primaryBtn, marginTop:6, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
+          {loading ? "Submitting..." : "Submit for review →"}
+        </button>
       </div>
     </div>
   );
