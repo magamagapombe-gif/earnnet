@@ -242,17 +242,17 @@ export async function getSettings() {
   return Object.fromEntries((data ?? []).map((r) => [r.key, r.value]));
 }
 
-// ── Admin: process withdrawal via LivePay API ──────────────────
-
-export async function adminProcessWithdrawal(withdrawalId) {
-  const { data, error } = await supabase.rpc("admin_process_withdrawal", {
-    p_withdrawal_id: withdrawalId,
-  });
-  if (error) throw error;
-  return data;
-}
-
 // ── Admin helpers (all go through Edge Function with service role) ──
+// NOTE: withdrawal processing is intentionally NOT here as a direct
+// supabase.rpc() call. adminApproveWithdrawal() below is the only way
+// to move a withdrawal to 'paid' — it goes through the admin-actions
+// edge function, which verifies is_admin server-side before calling
+// LivePay. A previous adminProcessWithdrawal() called the
+// admin_process_withdrawal RPC directly with no admin check and no
+// real LivePay call (it fabricated a reference locally), which meant
+// any logged-in user could mark any withdrawal 'paid' from devtools.
+// That RPC should be dropped/revoked in the database — see the
+// accompanying migration.
 
 async function adminFetch(payload) {
   const { data: { session } } = await supabase.auth.getSession();

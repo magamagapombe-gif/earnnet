@@ -85,6 +85,12 @@ Deno.serve(async (req) => {
         .single();
       if (wErr || !w) throw new Error("Withdrawal not found");
 
+      // Guard against double-processing — two admins approving at once,
+      // a retried request, or approving something already paid/rejected.
+      if (w.status !== "pending") {
+        throw new Error(`Withdrawal is already ${w.status} — nothing to approve.`);
+      }
+
       // Call LivePay to send money
       const livepayUrl = Deno.env.get("LIVEPAY_URL")!;
       const livepayKey = Deno.env.get("LIVEPAY_API_KEY")!;
@@ -108,35 +114,32 @@ Deno.serve(async (req) => {
     else if (action === "reject_withdrawal") {
       const { data: w, error: wErr } = await adminClient
         .from("withdrawals")
-        .select("user_id, amount")
+        .select("id, status")
         .eq("id", body.withdrawalId)
         .single();
       if (wErr || !w) throw new Error("Withdrawal not found");
 
-      // Refund balance
-      const { data: profile } = await adminClient
-        .from("profiles")
-        .select("balance")
-        .eq("id", w.user_id)
-        .single();
-      await adminClient
-        .from("profiles")
-        .update({ balance: (profile?.balance ?? 0) + w.amount })
-        .eq("id", w.user_id);
+      // Guard against double-processing, same as approve_withdrawal.
+      if (w.status !== "pending") {
+        throw new Error(`Withdrawal is already ${w.status} — nothing to reject.`);
+      }
 
-      await adminClient
+      // Refund whichever bucket (referral/earnings) it was actually
+      // deducted from — same RPC used when a LivePay payout fails, so
+      // there's one source of truth for "how a withdrawal gets undone"
+      // instead of this handler re-implementing it against a plain
+      // `balance` column that isn't even where the money came from.
+      const { error: refundErr } = await adminClient.rpc("refund_withdrawal_bucket", {
+        p_withdrawal_id: body.withdrawalId,
+      });
+      if (refundErr) throw refundErr;
+
+      const { error: upErr } = await adminClient
         .from("withdrawals")
         .update({ status: "rejected" })
         .eq("id", body.withdrawalId);
+      if (upErr) throw upErr;
 
-      // Log refund transaction
-      await adminClient.from("transactions").insert({
-        user_id: w.user_id,
-        amount: w.amount,
-        type: "refund",
-        description: "Withdrawal rejected — balance refunded",
-        created_at: new Date().toISOString(),
-      });
       result = { refunded: true };
     }
 

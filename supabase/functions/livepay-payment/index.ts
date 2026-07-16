@@ -131,9 +131,18 @@ serve(async (req) => {
 
       const reference = `WIT-${userId.slice(0,8)}-${Date.now()}`.slice(0, 30);
 
-      // 1. Deduct from the chosen bucket & insert the withdrawal record —
-      //    deduct_for_withdrawal itself checks that bucket has enough
-      //    balance and returns the new withdrawal's id directly.
+      // Deduct from the chosen bucket & insert the withdrawal record as
+      // 'pending' — deduct_for_withdrawal checks the bucket has enough
+      // balance, enforces min/max and the withdrawal-hours window, and
+      // returns the new withdrawal's id directly.
+      //
+      // IMPORTANT: this function used to also call LivePay's send-money
+      // endpoint right here, which meant money left the platform the
+      // moment a user submitted a request — before any admin had seen
+      // it. Disbursement now happens ONLY inside the admin-actions edge
+      // function's approve_withdrawal action, which is gated behind a
+      // server-side is_admin check. Do not add a LivePay payout call
+      // back into this branch.
       const { data: withdrawalId, error: rpcErr } = await supabase.rpc("deduct_for_withdrawal", {
         p_user_id:     userId,
         p_bucket:      bucket,
@@ -145,40 +154,9 @@ serve(async (req) => {
       });
       if (rpcErr) throw new Error(rpcErr.message);
 
-      // 2. Call LivePay send-money
-      const lpRes = await fetch(`${LIVEPAY_BASE_URL}/send-money`, {
-        method: "POST",
-        headers: {
-          "Content-Type":  "application/json",
-          "Authorization": `Bearer ${LIVEPAY_API_KEY}`,
-        },
-        body: JSON.stringify({
-          accountNumber: LIVEPAY_ACCOUNT_NUM,
-          phoneNumber:   phone,
-          amount,
-          currency:      "UGX",
-          reference,
-          description:   "EarnNet withdrawal payout",
-        }),
-      });
-
-      const lpData = await lpRes.json();
-
-      if (!lpRes.ok || !lpData.success) {
-        // Refund the bucket it was deducted from if LivePay fails
-        await supabase.rpc("refund_withdrawal_bucket", { p_withdrawal_id: withdrawalId });
-        throw new Error(lpData.error ?? "LivePay payout failed");
-      }
-
-      // 3. Mark withdrawal as processing with LivePay ref
-      await supabase.from("withdrawals").update({
-        status:      "processing",
-        livepay_ref: lpData.internal_reference,
-      }).eq("id", withdrawalId);
-
       return new Response(JSON.stringify({
         success: true,
-        message: "Withdrawal is being processed. Funds will arrive shortly.",
+        message: "Withdrawal request submitted. It will be processed after admin review.",
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
