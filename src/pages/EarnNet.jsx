@@ -105,7 +105,6 @@ const tierStyle = (level) => (TIER_BANDS.find(b => level >= b.min) ?? TIER_BANDS
 // Each monthly cycle is 30 days; principal stays locked for all 12
 // cycles (~1 year) — only that cycle's profit is up for payout each month.
 const fmtDuration = () => "30 days";
-const fmtLockup   = () => "1 year (12 monthly cycles)";
 
 // Given a user's investments, find the highest-level ACTIVE plan.
 // Each user_investments row stores plan_level (1–16), a snapshot of
@@ -856,7 +855,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
         ))}
       </nav>
 
-      {withdrawModal && <WithdrawModal profile={profile} settings={settings} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
+      {withdrawModal && <WithdrawModal profile={profile} settings={settings} investments={investments} userId={uid} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
       {depositModal  && <DepositModal  settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} onClose={() => setDepositModal(false)}  onSubmit={handleDeposit} refreshProfile={refreshProfile} dark={dark} />}
       {activateModal && <ActivateModal settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} profile={profile} onClose={() => setActivateModal(false)} onSubmit={handleActivate} refreshProfile={refreshProfile} dark={dark} />}
       {investModal   && <InvestModal   plan={investModal} profile={profile} userId={uid} investments={investments} onClose={() => setInvestModal(null)} onSuccess={async () => { setInvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Investment activated! Watch your profits grow 🌱"); }} dark={dark} />}
@@ -2644,7 +2643,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
             <span style={{ fontSize:16 }}>🔒</span>
             <div>
               <div style={{ fontSize:13, fontWeight:700 }}>{fmt(totalLocked)} in locked task earnings</div>
-              <div style={{ fontSize:10, opacity:0.75 }}>Released monthly once each plan's referral condition is met</div>
+              <div style={{ fontSize:10, opacity:0.75 }}>Released to your balance monthly</div>
             </div>
           </div>
         )}
@@ -2685,9 +2684,6 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
             {activeInvs.map(i => `${i.plan_name}: ${fmt(i.task_reward)}/task × ${i.daily_tasks}/day${i.mode==="auto" ? " (auto)" : ""}`).join(" · ")}
           </div>
         )}
-        <div style={{ fontSize:11, color:T.textSub, marginTop:12, lineHeight:1.5 }}>
-          💡 Task earnings pay out monthly once that month's referral condition is met. Principal stays locked for the full {fmtLockup()} and is only returned once the 12th cycle completes.
-        </div>
       </div>
 
       {/* ── Active investments ── */}
@@ -2702,7 +2698,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
       <div style={{ padding:"0 16px", marginBottom:16 }}>
         <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:4 }}>Growth Plans</div>
         <div style={{ fontSize:12, color:T.textSub, marginBottom:14 }}>
-          Each plan pays 65% profit monthly for {fmtLockup()}, with its own daily task count and reward. Principal is returned once all 12 cycles complete.
+          Each plan pays 65% profit monthly, with its own daily task count and reward.
         </div>
         {plans.map(plan => {
           const vt    = tierStyle(plan.level);
@@ -2724,7 +2720,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
                     <div style={{ fontSize:30, marginBottom:4 }}>{plan.icon}</div>
                     <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
                     <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                      65% paid monthly · {fmtLockup()} lockup
+                      65% monthly profit
                     </div>
                   </div>
                   <div style={{ textAlign:"right" }}>
@@ -2822,9 +2818,10 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
 // Principal is locked for all 12 cycles; each cycle's task-earned
 // profit (locked_task_earnings) only pays out once that cycle's
 // referral condition is met (see referralRequirementForCycle, which
-// mirrors check_monthly_eligibility on the backend). If it's not met,
-// the amount stays held and auto-retries every following cycle — or
-// the user can choose to fold it into principal early via Reinvest.
+// mirrors check_monthly_eligibility on the backend). The card itself
+// just shows the amount growing — the referral-progress explanation
+// only shows up in WithdrawModal, and only if it's actually relevant
+// to what the user's trying to withdraw right now.
 function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefresh, dark }) {
   const T            = theme(dark);
   const vt           = tierStyle(inv.plan_level ?? 1);
@@ -2836,33 +2833,13 @@ function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefres
   const cyclePct     = Math.min(100, Math.round((cycleNumber / cyclesTotal) * 100));
   const currentPrincipal = inv.current_principal ?? inv.amount;
   const [enabling, setEnabling]   = useState(false);
-  const [reinvesting, setReinvesting] = useState(false);
   const [err, setErr]             = useState("");
-  const [reqCount, setReqCount]   = useState(null); // how many qualifying referrals the user currently has
 
   const nextDue     = inv.next_payout_due_at ? new Date(inv.next_payout_due_at) : null;
   const now         = new Date();
   const msLeft      = nextDue ? Math.max(0, nextDue - now) : 0;
   const daysLeft    = Math.floor(msLeft / 86400000);
   const hrsLeft     = Math.floor((msLeft % 86400000) / 3600000);
-
-  const nextCycle  = cycleNumber + 1;
-  const requirement = referralRequirementForCycle(nextCycle);
-
-  // Only bother checking referral eligibility when there's something held
-  // and a condition actually applies to it — no need to hit the backend
-  // for cycle 1 or once everything's already paid out.
-  useEffect(() => {
-    let cancelled = false;
-    if (locked > 0 && requirement) {
-      getQualifyingReferralCount(userId, requirement.minAmount)
-        .then(c => { if (!cancelled) setReqCount(c); })
-        .catch(() => {});
-    }
-    return () => { cancelled = true; };
-  }, [userId, locked, requirement?.count, requirement?.minAmount]);
-
-  const eligible = !requirement || (reqCount != null && reqCount >= requirement.count);
 
   const handleEnableAuto = async () => {
     setErr("");
@@ -2875,18 +2852,6 @@ function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefres
       setErr(e.message ?? "Could not enable auto-mode");
     }
     setEnabling(false);
-  };
-
-  const handleReinvest = async () => {
-    setErr("");
-    setReinvesting(true);
-    try {
-      await reinvestHeldProfit(userId, inv.id);
-      await onRefresh?.();
-    } catch (e) {
-      setErr(e.message ?? "Could not reinvest held profit");
-    }
-    setReinvesting(false);
   };
 
   return (
@@ -2918,34 +2883,6 @@ function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefres
             of {fmt(inv.task_reward * inv.daily_tasks * 30)} target · grows as tasks complete
           </div>
         </div>
-
-        {locked > 0 && requirement && (
-          <div style={{ background: eligible ? (dark ? "#142e20" : "#E1F5EE") : (dark ? "#2a2410" : "#FFF8E1"), borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom: eligible ? 0 : 8 }}>
-              <span style={{ fontSize:16 }}>{eligible ? "✅" : "🔒"}</span>
-              <div style={{ fontSize:12, color: eligible ? BRAND_DARK : (dark ? "#FFD700" : "#7A5000") }}>
-                {eligible
-                  ? <><strong>{fmt(locked)}</strong> ready — pays out next time this plan processes.</>
-                  : <>Needs <strong>{requirement.count}</strong> referral{requirement.count > 1 ? "s" : ""}{requirement.minAmount > 0 ? ` with a plan ≥ ${fmt(requirement.minAmount)}` : " who activated and have an active plan"} to release. You have {reqCount ?? "…"}.</>}
-              </div>
-            </div>
-            {!eligible && (
-              <>
-                <div style={{ fontSize:11, color: dark ? "#FFD700" : "#7A5000", marginBottom:8 }}>
-                  It'll keep rolling forward and pay out in full once you qualify — or you can lock it into principal now instead of waiting.
-                </div>
-                <button
-                  onClick={handleReinvest}
-                  disabled={reinvesting}
-                  style={{ width:"100%", border:"none", borderRadius:8, padding:"9px 0", fontSize:12, fontWeight:700,
-                    background: BRAND, color:"white", cursor: reinvesting ? "default" : "pointer", opacity: reinvesting ? 0.7 : 1 }}
-                >
-                  {reinvesting ? "Reinvesting..." : `🔁 Reinvest ${fmt(locked)} into principal instead`}
-                </button>
-              </>
-            )}
-          </div>
-        )}
 
         {!isAuto && (
           <div style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
@@ -3073,7 +3010,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px", marginBottom:24 }}>
             <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Target profit per monthly cycle</div>
             <div style={{ fontFamily:"'Sora',sans-serif", fontSize:28, fontWeight:700, color:BRAND_DARK }}>{fmt(totalProfit)}</div>
-            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>paid monthly for {fmtLockup()}</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>paid monthly</div>
           </div>
           <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px", background:vt.gradient }} onClick={onClose}>
             Watch it grow →
@@ -3121,7 +3058,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
                 {plan.name} Plan
               </div>
               <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                65% paid monthly · {fmtLockup()} lockup
+                65% monthly profit
               </div>
             </div>
             <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
@@ -3131,13 +3068,13 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
         <div style={{ padding:"20px 22px 32px" }}>
           {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
-          {/* Summary cards — amount and term are fixed for this plan */}
+          {/* Summary cards */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
             {[
               ["You pay", fmt(totalCharge)],
               ["Target profit/cycle", fmt(totalProfit)],
-              ["Principal locked", fmtLockup()],
               ["Tasks/day", String(plan.dailyTasks)],
+              ["Per task", fmt(plan.taskReward)],
             ].map(([lbl, val]) => (
               <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
@@ -3219,11 +3156,10 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
               : (payWith === "wallet" ? `Pay ${fmt(totalCharge)} from wallet & activate →` : `Pay ${fmt(totalCharge)} & activate →`)}
           </button>
           <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:10, lineHeight:1.6 }}>
-            {fmt(amountNum)} is locked as principal for {fmtLockup()}{autoMode ? ` (plus a ${fmt(autoModeFee)} one-time auto-mode fee, charged once)` : ""}.{" "}
+            {fmt(amountNum)} is locked as principal{autoMode ? ` (plus a ${fmt(autoModeFee)} one-time auto-mode fee, charged once)` : ""}.{" "}
             {autoMode
               ? `Your daily tasks complete automatically up to ${fmt(totalProfit)} target profit each cycle.`
-              : `Complete your daily tasks yourself to earn up to ${fmt(totalProfit)} target profit each cycle.`}{" "}
-            Cycle 1's profit is free; from cycle 2 onward, that month's profit only pays out once you meet that month's referral condition — otherwise it rolls forward (or you can reinvest it into principal). Principal itself is only returned once all 12 cycles complete.
+              : `Complete your daily tasks yourself to earn up to ${fmt(totalProfit)} target profit each cycle.`}
           </p>
         </div>
       </div>
@@ -3405,20 +3341,74 @@ function ExtendModal({ investment: inv, userId, onClose, onSuccess, dark }) {
 // backend enforces this too (deduct_for_withdrawal rejects 'principal'
 // and 'deposits'), this is just keeping the UI from offering a path
 // that would fail server-side anyway.
-function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
+function WithdrawModal({ profile, settings, investments, userId, onClose, onSubmit, dark }) {
   const referralBal = profile?.balance_referral ?? 0;
   const earningsBal = profile?.balance_earnings ?? 0;
 
-  const [bucket, setBucket]   = useState(earningsBal > 0 ? "earnings" : "referral");
-  const [amount, setAmount]   = useState("");
-  const [phone, setPhone]     = useState(profile?.phone ?? "");
-  const [method, setMethod]   = useState(detectMethod(profile?.phone));
-  const [loading, setLoading] = useState(false);
-  const [err, setErr]         = useState("");
+  const [bucket, setBucket]     = useState(earningsBal > 0 ? "earnings" : "referral");
+  const [amount, setAmount]     = useState("");
+  const [phone, setPhone]       = useState(profile?.phone ?? "");
+  const [method, setMethod]     = useState(detectMethod(profile?.phone));
+  const [loading, setLoading]   = useState(false);
+  const [err, setErr]           = useState("");
+  const [pending, setPending]   = useState(null); // { amount, count, minAmount, have } or null
+  const [addingToPrincipal, setAddingToPrincipal] = useState(false);
   const T = theme(dark);
   const min = parseInt(settings.min_withdrawal ?? 1000);
   const max = parseInt(settings.max_withdrawal ?? 1000000);
   const bucketBal = bucket === "referral" ? referralBal : earningsBal;
+
+  // Only relevant when the user is actually trying to withdraw earnings —
+  // check whether any of their plans have profit sitting held on an unmet
+  // referral condition. If everything's clear (or they're withdrawing
+  // referral commissions instead), this stays null and shows nothing.
+  useEffect(() => {
+    let cancelled = false;
+    if (bucket !== "earnings" || !investments?.length) { setPending(null); return; }
+
+    const candidates = investments
+      .filter(i => i.status === "active" && (i.locked_task_earnings ?? 0) > 0)
+      .map(i => ({ inv: i, req: referralRequirementForCycle((i.cycle_number ?? 0) + 1) }))
+      .filter(c => c.req);
+
+    if (candidates.length === 0) { setPending(null); return; }
+
+    Promise.all(candidates.map(c => getQualifyingReferralCount(userId, c.req.minAmount)))
+      .then(counts => {
+        if (cancelled) return;
+        const unmet = candidates
+          .map((c, i) => ({ ...c, have: counts[i] }))
+          .filter(c => c.have < c.req.count);
+        if (unmet.length === 0) { setPending(null); return; }
+        // Surface the one needing the fewest additional referrals first —
+        // that's the most actionable thing to tell them.
+        unmet.sort((a, b) => (a.req.count - a.have) - (b.req.count - b.have));
+        const top = unmet[0];
+        setPending({
+          investmentId: top.inv.id,
+          amount: top.inv.locked_task_earnings,
+          count: top.req.count,
+          minAmount: top.req.minAmount,
+          have: top.have,
+          otherCount: unmet.length - 1,
+        });
+      })
+      .catch(() => { if (!cancelled) setPending(null); });
+
+    return () => { cancelled = true; };
+  }, [bucket, investments, userId]);
+
+  const handleAddToPrincipal = async () => {
+    if (!pending) return;
+    setAddingToPrincipal(true);
+    try {
+      await reinvestHeldProfit(userId, pending.investmentId);
+      setPending(null);
+    } catch (e) {
+      setErr(e.message ?? "Could not add to principal");
+    }
+    setAddingToPrincipal(false);
+  };
 
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
@@ -3469,6 +3459,22 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
             </button>
           ))}
         </div>
+
+        {pending && (
+          <div style={{ background: dark ? "#142e20" : "#E1F5EE", borderRadius:10, padding:"10px 14px", marginBottom:16 }}>
+            <div style={{ fontSize:12, color:BRAND_DARK, marginBottom:8 }}>
+              🎯 You've also got <strong>{fmt(pending.amount)}</strong> from a plan still growing — invite {pending.count} referral{pending.count > 1 ? "s" : ""}{pending.minAmount > 0 ? ` with a plan ≥ ${fmt(pending.minAmount)}` : ""} to add it here too (you're at {pending.have} of {pending.count}){pending.otherCount > 0 ? `, plus ${pending.otherCount} more plan${pending.otherCount > 1 ? "s" : ""} in the same boat` : ""}.
+            </div>
+            <button
+              onClick={handleAddToPrincipal}
+              disabled={addingToPrincipal}
+              style={{ width:"100%", border:`0.5px solid ${T.inputBrd}`, borderRadius:8, padding:"8px 0", fontSize:12, fontWeight:700,
+                background:"transparent", color:BRAND_DARK, cursor: addingToPrincipal ? "default" : "pointer", opacity: addingToPrincipal ? 0.7 : 1 }}
+            >
+              {addingToPrincipal ? "Adding..." : "Prefer it sooner? Add to principal instead"}
+            </button>
+          </div>
+        )}
 
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Amount (UGX)</label>
         <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(min)}`} value={amount} onChange={e => setAmount(e.target.value)} />

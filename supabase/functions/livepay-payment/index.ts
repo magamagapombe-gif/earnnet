@@ -32,7 +32,7 @@ serve(async (req) => {
       });
     }
 
-    const { action, amount, phone, method, userId, purpose } = await req.json();
+    const { action, amount, phone, method, userId, purpose, bucket } = await req.json();
 
     // Ensure the user can only act on their own account
     if (userId !== user.id) {
@@ -112,37 +112,40 @@ serve(async (req) => {
 
     // ── WITHDRAWAL (send money TO user) ───────────────────────
     if (action === "withdraw") {
-      // 1. Fetch user profile & check balance
+      // Only referral commissions and monthly plan/task earnings can be
+      // cashed out — principal and raw deposits are reinvest-only. This
+      // check is just an early, friendly rejection; deduct_for_withdrawal
+      // enforces the same rule server-side regardless of what's sent here.
+      if (bucket !== "referral" && bucket !== "earnings") {
+        throw new Error("Only referral commissions and earnings can be withdrawn.");
+      }
+
       const { data: profile, error: profErr } = await supabase
         .from("profiles")
-        .select("balance, activated")
+        .select("activated")
         .eq("id", userId)
         .single();
 
       if (profErr || !profile) throw new Error("Profile not found");
       if (!profile.activated)   throw new Error("Account not activated");
-      if (profile.balance < amount) throw new Error("Insufficient balance");
 
       const reference = `WIT-${userId.slice(0,8)}-${Date.now()}`.slice(0, 30);
 
-      // 2. Deduct balance immediately & insert withdrawal record
-      const { error: rpcErr } = await supabase.rpc("deduct_balance_for_withdrawal", {
-        p_user_id:   userId,
-        p_amount:    amount,
-        p_reference: reference,
-        p_method:    method,
-        p_phone:     phone,
+      // 1. Deduct from the chosen bucket & insert the withdrawal record —
+      //    deduct_for_withdrawal itself checks that bucket has enough
+      //    balance and returns the new withdrawal's id directly.
+      const { data: withdrawalId, error: rpcErr } = await supabase.rpc("deduct_for_withdrawal", {
+        p_user_id:     userId,
+        p_bucket:      bucket,
+        p_amount:      amount,
+        p_accept_fine: false,
+        p_reference:   reference,
+        p_method:      method,
+        p_phone:       phone,
       });
       if (rpcErr) throw new Error(rpcErr.message);
 
-      // 3. Get the new withdrawal record
-      const { data: withdrawal } = await supabase
-        .from("withdrawals")
-        .select("id")
-        .eq("reference", reference)
-        .single();
-
-      // 4. Call LivePay send-money
+      // 2. Call LivePay send-money
       const lpRes = await fetch(`${LIVEPAY_BASE_URL}/send-money`, {
         method: "POST",
         headers: {
@@ -162,16 +165,16 @@ serve(async (req) => {
       const lpData = await lpRes.json();
 
       if (!lpRes.ok || !lpData.success) {
-        // Refund balance if LivePay fails
-        await supabase.rpc("refund_withdrawal", { p_withdrawal_id: withdrawal?.id });
+        // Refund the bucket it was deducted from if LivePay fails
+        await supabase.rpc("refund_withdrawal_bucket", { p_withdrawal_id: withdrawalId });
         throw new Error(lpData.error ?? "LivePay payout failed");
       }
 
-      // 5. Mark withdrawal as processing with LivePay ref
+      // 3. Mark withdrawal as processing with LivePay ref
       await supabase.from("withdrawals").update({
         status:      "processing",
         livepay_ref: lpData.internal_reference,
-      }).eq("reference", reference);
+      }).eq("id", withdrawalId);
 
       return new Response(JSON.stringify({
         success: true,
