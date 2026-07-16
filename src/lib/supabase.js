@@ -178,6 +178,76 @@ export async function getUserDeposits(userId) {
   return data ?? [];
 }
 
+// ── KYC (identity verification) ─────────────────────────────────
+// One-time submission: front + back of a national ID or passport,
+// uploaded to a private storage bucket and queued for admin review.
+// Required before a user's first withdrawal (enforced client-side
+// here in the withdraw gate, and must ALSO be enforced server-side
+// in the livepay-payment edge function — see migration_kyc.sql).
+
+function dataUrlToBlob(dataUrl, fallbackMime = "image/jpeg") {
+  const [header, base64] = dataUrl.includes(",") ? dataUrl.split(",") : [null, dataUrl];
+  const mime = header?.match(/data:(.*);base64/)?.[1] ?? fallbackMime;
+  const byteChars = atob(base64);
+  const byteArr = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+  return new Blob([byteArr], { type: mime });
+}
+
+// Latest KYC submission for a user, or null if they've never submitted.
+export async function getKycStatus(userId) {
+  const { data, error } = await supabase
+    .from("kyc_submissions")
+    .select("*")
+    .eq("user_id", userId)
+    .order("submitted_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// idType: 'national_id' | 'passport'. front/backDataUrl are base64
+// data URLs straight from a FileReader, same shape as task proof
+// screenshots in completeTask() above.
+export async function submitKyc(userId, idType, frontDataUrl, backDataUrl) {
+  const existing = await getKycStatus(userId);
+  if (existing && existing.status !== "rejected") {
+    throw new Error(
+      existing.status === "approved"
+        ? "Your ID is already verified."
+        : "Your ID is already under review — hang tight."
+    );
+  }
+
+  const stamp = Date.now();
+  const frontPath = `${userId}/${stamp}-front.jpg`;
+  const backPath  = `${userId}/${stamp}-back.jpg`;
+
+  // Bucket is private — no getPublicUrl here. Admin review reads these
+  // via a signed URL minted server-side (see adminGetKycDocumentUrl).
+  const { error: frontErr } = await supabase.storage
+    .from("kyc-documents")
+    .upload(frontPath, dataUrlToBlob(frontDataUrl), { upsert: true });
+  if (frontErr) throw frontErr;
+
+  const { error: backErr } = await supabase.storage
+    .from("kyc-documents")
+    .upload(backPath, dataUrlToBlob(backDataUrl), { upsert: true });
+  if (backErr) throw backErr;
+
+  const { data, error } = await supabase
+    .from("kyc_submissions")
+    .insert({ user_id: userId, id_type: idType, front_path: frontPath, back_path: backPath, status: "pending" })
+    .select()
+    .single();
+  if (error) throw error;
+
+  await supabase.from("profiles").update({ kyc_status: "pending" }).eq("id", userId);
+
+  return data;
+}
+
 // ── Account Activation ─────────────────────────────────────────
 
 export async function activateAccount(userId, method, phone) {
@@ -290,6 +360,30 @@ export async function adminApproveWithdrawal(withdrawalId) {
 
 export async function adminRejectWithdrawal(withdrawalId) {
   return adminFetch({ action: "reject_withdrawal", withdrawalId });
+}
+
+// ── Admin: KYC review ────────────────────────────────────────────
+// Same pattern as withdrawals above — status changes and document
+// access go through admin-actions with a service-role key, never a
+// direct client call, since kyc_submissions has no client update
+// policy and the storage bucket has no public/anon read policy.
+
+export async function adminListKycSubmissions(status = "pending") {
+  return adminFetch({ action: "list_kyc_submissions", status });
+}
+
+// side: 'front' | 'back'. Returns a short-lived signed URL, since the
+// kyc-documents bucket is private.
+export async function adminGetKycDocumentUrl(submissionId, side) {
+  return adminFetch({ action: "get_kyc_document_url", submissionId, side });
+}
+
+export async function adminApproveKyc(submissionId) {
+  return adminFetch({ action: "approve_kyc", submissionId });
+}
+
+export async function adminRejectKyc(submissionId, reason) {
+  return adminFetch({ action: "reject_kyc", submissionId, reason });
 }
 
 export async function adminSuspendUser(userId, status) {

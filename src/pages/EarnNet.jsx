@@ -8,6 +8,7 @@ import {
   getUserInvestments, buyInvestmentPlan, enableAutoModeForPlan,
   requestInvestmentPayment, processMonthlyVaultPayouts,
   reinvestFromBalance, reinvestHeldProfit, getQualifyingReferralCount,
+  submitKyc, getKycStatus,
 } from "../lib/supabase";
 
 const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
@@ -647,6 +648,8 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [activateModal, setActivateModal] = useState(false);
   const [investModal, setInvestModal]     = useState(null); // plan object or null
   const [reinvestModal, setReinvestModal] = useState(null); // completed (12-cycle) investment or null
+  const [kycModal, setKycModal]           = useState(false);
+  const [kycSubmission, setKycSubmission] = useState(null); // latest kyc_submissions row, or null
   const [selectedTask, setSelectedTask]   = useState(null);
   const [notifOpen, setNotifOpen]         = useState(false);
   const uid = session.user.id;
@@ -693,9 +696,13 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     } catch {}
   }, [uid]);
 
+  const loadKyc = useCallback(async () => {
+    try { setKycSubmission(await getKycStatus(uid)); } catch {}
+  }, [uid]);
+
   // Only re-run when uid changes, not on every callback recreation
   useEffect(() => {
-    loadTasks(); loadWallet(); loadReferrals(); loadInvestments();
+    loadTasks(); loadWallet(); loadReferrals(); loadInvestments(); loadKyc();
   }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist which task the user is mid-task on, so a mobile tab
@@ -749,6 +756,14 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const handleActivate = async ({ method, phone }) => {
     // Just call the API — the modal manages its own waiting/success screens
     await activateAccount(uid, method, phone);
+  };
+
+  const handleKycSubmit = async ({ idType, front, back }) => {
+    await submitKyc(uid, idType, front, back);
+    await Promise.all([loadKyc(), refreshProfile()]);
+    setKycModal(false);
+    setWithdrawModal(false); // they'll reopen it once approved
+    showToast("ID submitted — we'll review it shortly ✓");
   };
 
   const tabs = [
@@ -855,11 +870,12 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
         ))}
       </nav>
 
-      {withdrawModal && <WithdrawModal profile={profile} settings={settings} investments={investments} userId={uid} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
+      {withdrawModal && <WithdrawModal profile={profile} settings={settings} investments={investments} userId={uid} kycSubmission={kycSubmission} onStartKyc={() => { setWithdrawModal(false); setKycModal(true); }} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
       {depositModal  && <DepositModal  settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} onClose={() => setDepositModal(false)}  onSubmit={handleDeposit} refreshProfile={refreshProfile} dark={dark} />}
       {activateModal && <ActivateModal settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} profile={profile} onClose={() => setActivateModal(false)} onSubmit={handleActivate} refreshProfile={refreshProfile} dark={dark} />}
       {investModal   && <InvestModal   plan={investModal} profile={profile} userId={uid} investments={investments} onClose={() => setInvestModal(null)} onSuccess={async () => { setInvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Investment activated! Watch your profits grow 🌱"); }} dark={dark} />}
       {reinvestModal && <ReinvestModal plan={reinvestModal} profile={profile} userId={uid} plans={VAULT_PLANS} onClose={() => setReinvestModal(null)} onSuccess={async () => { setReinvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Reinvested! Your new plan is growing 🌱"); }} dark={dark} />}
+      {kycModal      && <KycModal      kycSubmission={kycSubmission} onClose={() => setKycModal(false)} onSubmit={handleKycSubmit} dark={dark} />}
       {toast && <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background: toast.type === "error" ? "#E24B4A" : BRAND, color:"white", padding:"12px 24px", borderRadius:14, fontSize:13, fontWeight:500, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.25)", animation:"slideUp 0.3s ease", whiteSpace:"nowrap" }}>{toast.msg}</div>}
 
       {/* Close notif on outside click */}
@@ -3341,9 +3357,11 @@ function ExtendModal({ investment: inv, userId, onClose, onSuccess, dark }) {
 // backend enforces this too (deduct_for_withdrawal rejects 'principal'
 // and 'deposits'), this is just keeping the UI from offering a path
 // that would fail server-side anyway.
-function WithdrawModal({ profile, settings, investments, userId, onClose, onSubmit, dark }) {
+function WithdrawModal({ profile, settings, investments, userId, kycSubmission, onStartKyc, onClose, onSubmit, dark }) {
   const referralBal = profile?.balance_referral ?? 0;
   const earningsBal = profile?.balance_earnings ?? 0;
+  const kycStatus = profile?.kyc_status ?? kycSubmission?.status ?? "none";
+  const kycApproved = kycStatus === "approved";
 
   const [bucket, setBucket]     = useState(earningsBal > 0 ? "earnings" : "referral");
   const [amount, setAmount]     = useState("");
@@ -3418,6 +3436,7 @@ function WithdrawModal({ profile, settings, investments, userId, onClose, onSubm
     // Withdrawal window: 7:00 AM – 7:00 PM EAT
     const now  = new Date();
     const hour = now.getHours(); // local device time (Uganda = UTC+3)
+    if (!kycApproved)      return setErr("Please verify your ID before withdrawing.");
     if (hour < 7 || hour >= 19) return setErr("Withdrawals are only processed between 7:00 AM and 7:00 PM. Try again during business hours.");
     if (!amt || amt < min) return setErr(`Minimum withdrawal is ${fmt(min)}`);
     if (amt > max)         return setErr(`Maximum is ${fmt(max)}`);
