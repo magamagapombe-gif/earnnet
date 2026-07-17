@@ -4,6 +4,30 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const LIVEPAY_API_KEY = Deno.env.get("LIVEPAY_API_KEY")!;
+const WEBHOOK_SECRET = Deno.env.get("LIVEPAY_WEBHOOK_SECRET")!;
+// Must match byte-for-byte what's set as the "Collection Events" URL in the
+// LivePay dashboard — it's part of the signed string.
+const WEBHOOK_URL = `${Deno.env.get("SUPABASE_URL")!}/functions/v1/livepay-webhook`;
+
+async function verifySignature(sigHeader, status, customerRef, internalRef) {
+  if (!sigHeader) return false;
+  const parts = Object.fromEntries(sigHeader.split(",").map((p) => p.split("=")));
+  const timestamp = parts["t"];
+  const received  = parts["v"];
+  if (!timestamp || !received) return false;
+
+  const stringToSign = WEBHOOK_URL + timestamp + status + customerRef + internalRef;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(WEBHOOK_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(stringToSign));
+  const expected = Array.from(new Uint8Array(sigBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return expected === received;
+}
 
 serve(async (req) => {
   // LivePay sends POST with JSON body
@@ -12,26 +36,27 @@ serve(async (req) => {
   }
 
   try {
-    // NOTE: LivePay does not send `Authorization: Bearer <LIVEPAY_API_KEY>` on
-    // its webhook calls (confirmed via Supabase logs — real callbacks were
-    // being rejected with 401 by the old check below, silently dropping
-    // confirmed deposits/activations even though the user had been charged).
-    // LivePay does not currently document a webhook signing secret either,
-    // so for now we authenticate the callback by requiring it to reference
-    // a real, known-pending deposit row (looked up below) rather than by
-    // header. If LivePay adds a documented signature/secret scheme later,
-    // verify it here instead.
+    // UPDATE: docs.livepay.me/webhooks confirms LivePay DOES support signed
+    // webhooks (HMAC-SHA256 over webhook_url+timestamp+status+
+    // customer_reference+internal_reference, sent as X-Webhook-Signature).
+    // The note this replaced was written before that was known — we now
+    // verify the signature below instead of trusting by reference alone.
     const body = await req.json();
     console.log("LivePay webhook received:", JSON.stringify(body));
 
-    // LivePay webhook payload shape (adjust field names to match their actual API):
-    // { reference, status, amount, phone, internal_reference, ... }
     // LivePay uses customer_reference and "Success" (capital S)
     const reference = body.customer_reference ?? body.reference;
     const { status, amount, internal_reference } = body;
 
     if (!reference) {
       return new Response(JSON.stringify({ error: "Missing reference" }), { status: 400 });
+    }
+
+    const sigHeader = req.headers.get("X-Webhook-Signature");
+    const validSig = await verifySignature(sigHeader, status, reference, internal_reference ?? "");
+    if (!validSig) {
+      console.error("Invalid or missing webhook signature for deposit reference:", reference);
+      return new Response(JSON.stringify({ error: "Invalid signature" }), { status: 401 });
     }
 
     // Use service role to bypass RLS for crediting balance

@@ -91,24 +91,57 @@ Deno.serve(async (req) => {
         throw new Error(`Withdrawal is already ${w.status} — nothing to approve.`);
       }
 
-      // Call LivePay to initiate the payout. LivePay's payouts are async —
-      // this call only confirms LivePay *accepted* the request, not that
-      // money has actually landed. Mark "processing" here; the dedicated
-      // livepay-payout-webhook function flips it to "paid" (or refunds and
-      // marks "rejected") once LivePay calls back with the real outcome.
+      // Call LivePay's Send Money API to initiate the payout. This is
+      // LivePay's actual payout endpoint (docs.livepay.me/send-money) —
+      // NOT a generic "/payout" path. It requires accountNumber, a
+      // phoneNumber, amount, currency, reference (<=30 chars, no
+      // spaces), and description. LivePay's payouts are async — this
+      // call only confirms LivePay *accepted* the request, not that
+      // money has actually landed. Mark "processing" here; the
+      // dedicated livepay-payout-webhook function flips it to "paid"
+      // (or refunds and marks "rejected") once LivePay calls back with
+      // the real outcome.
       const livepayUrl = Deno.env.get("LIVEPAY_URL")!;
       const livepayKey = Deno.env.get("LIVEPAY_API_KEY")!;
-      const lpRes = await fetch(`${livepayUrl}/payout`, {
+      const livepayAccountNum = Deno.env.get("LIVEPAY_ACCOUNT_NUM")!;
+
+      // LivePay caps reference at 30 chars with no spaces — w.id is a
+      // 36-char UUID, so we send a shortened, still-traceable reference
+      // instead and store it so the payout webhook can match on it via
+      // livepay_ref (see livepay-payout-webhook, which looks up by
+      // id.eq OR livepay_ref.eq).
+      const livepayReference = `WIT-${w.id.slice(0, 8)}-${Date.now()}`.slice(0, 30);
+
+      const lpRes = await fetch(`${livepayUrl}/send-money`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${livepayKey}` },
-        body: JSON.stringify({ amount: w.amount, phone: w.phone_number, method: w.method, reference: w.id }),
+        body: JSON.stringify({
+          accountNumber: livepayAccountNum,
+          phoneNumber:   w.phone_number,
+          amount:        w.amount,
+          currency:      "UGX",
+          reference:     livepayReference,
+          description:   "EarnNet withdrawal payout",
+        }),
       });
-      const lpData = await lpRes.json();
-      if (!lpData.success) throw new Error(lpData.error ?? "LivePay payout failed");
+
+      // Read as text first — a wrong/unreachable endpoint or upstream
+      // error page comes back as HTML, which would throw an opaque
+      // "Unexpected token '<'" if we called .json() directly.
+      const rawText = await lpRes.text();
+      let lpData: any;
+      try {
+        lpData = JSON.parse(rawText);
+      } catch {
+        throw new Error(`LivePay returned non-JSON (status ${lpRes.status}): ${rawText.slice(0, 200)}`);
+      }
+      if (!lpRes.ok || !lpData.success) {
+        throw new Error(lpData.error ?? `LivePay payout failed (status ${lpRes.status})`);
+      }
 
       const { error: upErr } = await adminClient
         .from("withdrawals")
-        .update({ status: "processing", livepay_ref: lpData.reference })
+        .update({ status: "processing", livepay_ref: lpData.internal_reference })
         .eq("id", body.withdrawalId);
       if (upErr) throw upErr;
       result = { processing: true };
