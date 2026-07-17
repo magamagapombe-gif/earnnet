@@ -352,10 +352,21 @@ function EarnNetApp() {
     finally { setLoading(false); }
   }
 
+  // Silent refresh — used after in-app actions (task complete, deposit,
+  // withdraw, invest, etc). Deliberately does NOT touch `loading`: doing
+  // so used to unmount the whole MainApp tree (swapping in <Splash/>)
+  // on every single action, which reset MainApp's local UI state each
+  // time — closing the notifications dropdown, resetting the wallet's
+  // transaction-history selector back to "transactions", etc. This just
+  // updates the profile object in place instead.
+  async function refreshProfileSilently(uid) {
+    try { setProfile(await getProfile(uid)); } catch {}
+  }
+
   if (loading)      return <Splash dark={dark} />;
   if (showLanding)  return <LandingPage onGetStarted={() => setShowLanding(false)} settings={settings} dark={dark} toggleDark={toggleDark} />;
   if (!session)     return <AuthFlow settings={settings} dark={dark} toggleDark={toggleDark} />;
-  return <MainApp session={session} profile={profile} settings={settings} refreshProfile={() => loadProfile(session.user.id)} dark={dark} toggleDark={toggleDark} />;
+  return <MainApp session={session} profile={profile} settings={settings} refreshProfile={() => refreshProfileSilently(session.user.id)} dark={dark} toggleDark={toggleDark} />;
 }
 
 export default function EarnNet() {
