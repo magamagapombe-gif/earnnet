@@ -13,6 +13,20 @@ import {
 
 const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
 
+// Coerces any stored/typed phone number to the local 0XXXXXXXXX shape
+// LivePay expects, regardless of how it was saved (with/without +256,
+// spaces, dashes, etc). Deposit's phone field always starts blank and
+// gets typed fresh, which is why it "accidentally" always worked —
+// Invest/Withdraw/Activate pre-fill from the stored profile value, so
+// they need this same normalization applied to that stored value too.
+const normalizePhone = (raw) => {
+  const digits = (raw ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("256")) return "0" + digits.slice(3);
+  if (digits.startsWith("0")) return digits;
+  return digits;
+};
+
 const detectMethod = (phone) => {
   const n = (phone ?? "").replace(/\D/g, "");
   // Airtel Uganda: 070x, 075x, 074x, 020x
@@ -928,8 +942,8 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
 
 // ── Activate Modal ─────────────────────────────────────────────
 function ActivateModal({ settings, userId, currentBalance, profile, onClose, onSubmit, refreshProfile, dark }) {
-  const [phone, setPhone]     = useState(profile?.phone ?? "");
-  const [method, setMethod]   = useState(detectMethod(profile?.phone));
+  const [phone, setPhone]     = useState(normalizePhone(profile?.phone));
+  const [method, setMethod]   = useState(detectMethod(normalizePhone(profile?.phone)));
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
   const [step, setStep]       = useState("form"); // "form" | "waiting" | "success"
@@ -1032,8 +1046,8 @@ function ActivateModal({ settings, userId, currentBalance, profile, onClose, onS
 // ── Deposit Modal ──────────────────────────────────────────────
 function DepositModal({ settings, userId, currentBalance, profile, onClose, onSubmit, refreshProfile, dark }) {
   const [amount, setAmount]   = useState("");
-  const [phone, setPhone]     = useState(profile?.phone ?? "");
-  const [method, setMethod]   = useState(detectMethod(profile?.phone));
+  const [phone, setPhone]     = useState(normalizePhone(profile?.phone));
+  const [method, setMethod]   = useState(detectMethod(normalizePhone(profile?.phone)));
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
   const [step, setStep]       = useState("form"); // "form" | "waiting" | "success"
@@ -3035,8 +3049,8 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
 
   const walletBalance = profile?.balance ?? 0;
   const walletEnough  = walletBalance >= totalCharge;
-  const [phone, setPhone]     = useState(profile?.phone ?? "");
-  const [method, setMethod]   = useState(detectMethod(profile?.phone));
+  const [phone, setPhone]     = useState(normalizePhone(profile?.phone));
+  const [method, setMethod]   = useState(detectMethod(normalizePhone(profile?.phone)));
   const [payWith, setPayWith] = useState(walletEnough ? "wallet" : "mobile"); // wallet | mobile
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
@@ -3099,15 +3113,17 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
             {plan.name} Plan Active!
           </div>
           <div style={{ fontSize:14, color:T.textSub, marginBottom:8, lineHeight:1.7 }}>
-            Your investment is now growing. Come back to watch your profits tick up in real time.
+            {autoMode
+              ? "Your plan is now active. Your daily tasks will complete automatically, and your profit grows as each one finishes."
+              : "Your plan is now active. Complete your daily tasks to earn profit — nothing accrues until a task is done."}
           </div>
           <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px", marginBottom:24 }}>
-            <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Target profit per monthly cycle</div>
+            <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Target profit this cycle</div>
             <div style={{ fontFamily:"'Sora',sans-serif", fontSize:28, fontWeight:700, color:BRAND_DARK }}>{fmt(totalProfit)}</div>
-            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>paid monthly</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>released to your balance once the cycle completes</div>
           </div>
           <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px", background:vt.gradient }} onClick={onClose}>
-            Watch it grow →
+            {autoMode ? "Got it →" : "Start my tasks →"}
           </button>
         </div>
       </div>
@@ -3443,8 +3459,8 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
 
   const [bucket, setBucket]     = useState(earningsBal > 0 ? "earnings" : "referral");
   const [amount, setAmount]     = useState("");
-  const [phone, setPhone]       = useState(profile?.phone ?? "");
-  const [method, setMethod]     = useState(detectMethod(profile?.phone));
+  const [phone, setPhone]       = useState(normalizePhone(profile?.phone));
+  const [method, setMethod]     = useState(detectMethod(normalizePhone(profile?.phone)));
   const [loading, setLoading]   = useState(false);
   const [err, setErr]           = useState("");
   const [pending, setPending]   = useState(null); // { amount, count, minAmount, have } or null
