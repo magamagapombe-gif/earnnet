@@ -91,7 +91,11 @@ Deno.serve(async (req) => {
         throw new Error(`Withdrawal is already ${w.status} — nothing to approve.`);
       }
 
-      // Call LivePay to send money
+      // Call LivePay to initiate the payout. LivePay's payouts are async —
+      // this call only confirms LivePay *accepted* the request, not that
+      // money has actually landed. Mark "processing" here; the dedicated
+      // livepay-payout-webhook function flips it to "paid" (or refunds and
+      // marks "rejected") once LivePay calls back with the real outcome.
       const livepayUrl = Deno.env.get("LIVEPAY_URL")!;
       const livepayKey = Deno.env.get("LIVEPAY_API_KEY")!;
       const lpRes = await fetch(`${livepayUrl}/payout`, {
@@ -104,10 +108,10 @@ Deno.serve(async (req) => {
 
       const { error: upErr } = await adminClient
         .from("withdrawals")
-        .update({ status: "paid", livepay_ref: lpData.reference, paid_at: new Date().toISOString() })
+        .update({ status: "processing", livepay_ref: lpData.reference })
         .eq("id", body.withdrawalId);
       if (upErr) throw upErr;
-      result = { paid: true };
+      result = { processing: true };
     }
 
     // ── Reject withdrawal (refund balance) ───────────────────────
