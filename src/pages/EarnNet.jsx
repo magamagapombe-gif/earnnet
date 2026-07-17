@@ -677,15 +677,25 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [kycSubmission, setKycSubmission] = useState(null); // latest kyc_submissions row, or null
   const [selectedTask, setSelectedTask]   = useState(null);
   const [notifOpen, setNotifOpen]         = useState(false);
+  const [confirmClearNotifs, setConfirmClearNotifs] = useState(false);
   const uid = session.user.id;
   const T   = theme(dark);
   const readNotifKey = `earnnet_read_notifs_${uid}`;
   const [readNotifIds, setReadNotifIds] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem(readNotifKey) ?? "[]")); } catch { return new Set(); }
   });
+  const notifClearedKey = `earnnet_notifs_cleared_${uid}`;
+  const [notifClearedAt, setNotifClearedAt] = useState(() => {
+    try { return parseInt(localStorage.getItem(notifClearedKey) ?? "0", 10) || 0; } catch { return 0; }
+  });
 
-  // Derive notifications from transactions
-  const notifications = txns.slice(0, 5).map(tx => ({
+  // Derive notifications from transactions — hide anything at/before the
+  // last "Clear all" cutoff (a local dismissal, not a deletion of the
+  // underlying transaction — that record still lives in Wallet history).
+  const notifications = txns
+    .filter(tx => new Date(tx.created_at).getTime() > notifClearedAt)
+    .slice(0, 5)
+    .map(tx => ({
     id: tx.id,
     icon: tx.type === "task" ? "✅" : tx.type === "referral" ? "👥" : tx.type === "bonus" ? "🎁" : tx.type === "streak" ? "🔥" : "💸",
     title: tx.description ?? tx.type,
@@ -694,6 +704,12 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     read: readNotifIds.has(tx.id),
   }));
   const unreadCount = notifications.filter(n => !n.read).length;
+
+  const clearAllNotifs = () => {
+    const now = Date.now();
+    setNotifClearedAt(now);
+    try { localStorage.setItem(notifClearedKey, String(now)); } catch {}
+  };
 
   const markAllNotifsRead = () => {
     const ids = new Set([...readNotifIds, ...notifications.map(n => n.id)]);
@@ -870,10 +886,21 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
               <div style={{ position:"absolute", right:0, top:"calc(100% + 8px)", width:280, background:T.notifBg, border:`0.5px solid ${T.border}`, borderRadius:16, boxShadow:"0 8px 24px rgba(0,0,0,0.15)", zIndex:200, overflow:"hidden" }}>
                 <div style={{ padding:"12px 14px 10px", borderBottom:`0.5px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <span style={{ fontWeight:700, fontSize:13, color:T.text }}>Recent activity</span>
-                  <button onClick={markAllNotifsRead} disabled={unreadCount === 0}
-                    style={{ background:"none", border:"none", color: unreadCount === 0 ? T.textSub : BRAND, fontSize:11, fontWeight:600, cursor: unreadCount === 0 ? "default" : "pointer", padding:0 }}>
-                    Mark all as read
-                  </button>
+                  <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                    <button onClick={markAllNotifsRead} disabled={unreadCount === 0}
+                      style={{ background:"none", border:"none", color: unreadCount === 0 ? T.textSub : BRAND, fontSize:11, fontWeight:600, cursor: unreadCount === 0 ? "default" : "pointer", padding:0 }}>
+                      Mark all as read
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirmClearNotifs) { clearAllNotifs(); setConfirmClearNotifs(false); }
+                        else { setConfirmClearNotifs(true); setTimeout(() => setConfirmClearNotifs(false), 3000); }
+                      }}
+                      disabled={notifications.length === 0}
+                      style={{ background:"none", border:"none", color: notifications.length === 0 ? T.textSub : "#E24B4A", fontSize:11, fontWeight:600, cursor: notifications.length === 0 ? "default" : "pointer", padding:0 }}>
+                      {confirmClearNotifs ? "Tap to confirm" : "Clear all"}
+                    </button>
+                  </div>
                 </div>
                 {notifications.length === 0
                   ? <div style={{ padding:20, textAlign:"center", color:T.textSub, fontSize:13 }}>No activity yet</div>
@@ -912,7 +939,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
         {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} kycSubmission={kycSubmission} onStartKyc={() => setKycModal(true)} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} referrals={referrals} dark={dark} />}
         {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} investments={investments} onGoGrow={() => setTab("grow")} dark={dark} />}
         {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={VAULT_PLANS} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onRefresh={async () => { await Promise.all([loadInvestments(), refreshProfile()]); }} dark={dark} />}
-        {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
+        {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} userId={uid} />}
         {tab === "referral" && <ReferralTab profile={profile} referrals={referrals} settings={settings} dark={dark} />}
         {tab === "profile"  && <ProfileTab  profile={profile} investments={investments} kycSubmission={kycSubmission} onStartKyc={() => setKycModal(true)} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
       </main>
@@ -2630,10 +2657,30 @@ function TaskCard({ task: t, onSelect, compact, dark }) {
 }
 
 // ── Wallet Tab ─────────────────────────────────────────────────
-function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw, onDeposit, dark }) {
+function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw, onDeposit, dark, userId }) {
   const [view, setView] = useState("transactions");
   const T = theme(dark);
   const minW = settings.min_withdrawal ?? 1000;
+
+  // Local "clear history" — hides entries at/before the cutoff for this
+  // device/user. Doesn't delete the underlying records (these are real
+  // financial transactions), just dismisses them from view here.
+  const clearedKey = `earnnet_history_cleared_${userId}`;
+  const [clearedAt, setClearedAt] = useState(() => {
+    try { return parseInt(localStorage.getItem(clearedKey) ?? "0", 10) || 0; } catch { return 0; }
+  });
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const visibleTxns        = txns.filter(tx => new Date(tx.created_at).getTime() > clearedAt);
+  const visibleWithdrawals = withdrawals.filter(w => new Date(w.requested_at).getTime() > clearedAt);
+  const visibleDeposits    = deposits.filter(d => new Date(d.requested_at).getTime() > clearedAt);
+  const nothingToClear = visibleTxns.length === 0 && visibleWithdrawals.length === 0 && visibleDeposits.length === 0;
+
+  const clearHistory = () => {
+    const now = Date.now();
+    setClearedAt(now);
+    try { localStorage.setItem(clearedKey, String(now)); } catch {}
+  };
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
@@ -2648,26 +2695,37 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
       </div>
 
       <div style={{ padding:"0 16px 16px" }}>
-        <div style={{ fontWeight:600, fontSize:14, marginBottom:8, color:T.text }}>Transaction history</div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+          <div style={{ fontWeight:600, fontSize:14, color:T.text }}>Transaction history</div>
+          <button
+            onClick={() => {
+              if (confirmClear) { clearHistory(); setConfirmClear(false); }
+              else { setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000); }
+            }}
+            disabled={nothingToClear}
+            style={{ background:"none", border:"none", color: nothingToClear ? T.textSub : "#E24B4A", fontSize:11, fontWeight:600, cursor: nothingToClear ? "default" : "pointer", padding:0 }}>
+            {confirmClear ? "Tap to confirm" : "🗑 Clear history"}
+          </button>
+        </div>
         <select
           value={view}
           onChange={e => setView(e.target.value)}
           style={{ width:"100%", padding:"11px 14px", borderRadius:12, border:`0.5px solid ${T.chipBrd}`, background:T.chipBg, color:T.text, fontSize:13, fontWeight:600, cursor:"pointer", appearance:"none", WebkitAppearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%231D9E75' stroke-width='2' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center" }}
         >
-          <option value="transactions">Transactions ({txns.length})</option>
-          <option value="withdrawals">Withdrawals ({withdrawals.length})</option>
-          <option value="deposits">Deposits ({deposits.length})</option>
+          <option value="transactions">Transactions ({visibleTxns.length})</option>
+          <option value="withdrawals">Withdrawals ({visibleWithdrawals.length})</option>
+          <option value="deposits">Deposits ({visibleDeposits.length})</option>
         </select>
       </div>
 
       <div style={{ padding:"0 16px" }}>
-        {view === "transactions" && (txns.length === 0
+        {view === "transactions" && (visibleTxns.length === 0
           ? <div style={{ textAlign:"center", color:T.textSub, padding:30 }}>No transactions yet</div>
-          : txns.map(tx => <TxRow key={tx.id} tx={tx} dark={dark} />)
+          : visibleTxns.map(tx => <TxRow key={tx.id} tx={tx} dark={dark} />)
         )}
-        {view === "withdrawals" && (withdrawals.length === 0
+        {view === "withdrawals" && (visibleWithdrawals.length === 0
           ? <div style={{ textAlign:"center", color:T.textSub, padding:30 }}>No withdrawal history</div>
-          : withdrawals.map(w => (
+          : visibleWithdrawals.map(w => (
               <div key={w.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                 <div>
                   <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{fmt(w.amount)}</div>
@@ -2677,9 +2735,9 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
               </div>
             ))
         )}
-        {view === "deposits" && (deposits.length === 0
+        {view === "deposits" && (visibleDeposits.length === 0
           ? <div style={{ textAlign:"center", color:T.textSub, padding:30 }}>No deposit history</div>
-          : deposits.map(d => (
+          : visibleDeposits.map(d => (
               <div key={d.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                 <div>
                   <div style={{ fontWeight:600, fontSize:14, color:T.text }}>+{fmt(d.amount)}</div>
