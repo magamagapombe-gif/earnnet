@@ -174,18 +174,33 @@ Deno.serve(async (req) => {
     }
 
     // ── List KYC submissions ─────────────────────────────────────
-    // ASSUMPTION: table `kyc_submissions` (id, user_id, document_path,
-    // status, submitted_at) joined to `profiles` for name/phone.
-    // Adjust column/table names below if yours differ.
+    // Fetch kyc_submissions and profiles as two plain queries and merge
+    // in JS, rather than a PostgREST embed (`profiles(name, phone)`).
+    // The embed silently breaks the *entire* query — throwing before
+    // any rows come back — if kyc_submissions.user_id isn't registered
+    // as a recognized foreign key to profiles.id in the schema cache
+    // (e.g. if it only references auth.users). This way a missing FK
+    // just means blank name/phone instead of an empty queue.
     else if (action === "list_kyc_submissions") {
       let query = adminClient
         .from("kyc_submissions")
-        .select("*, profiles(name, phone)")
+        .select("*")
         .order("submitted_at", { ascending: false });
       if (body.status) query = query.eq("status", body.status);
-      const { data, error } = await query;
+      const { data: subs, error } = await query;
       if (error) throw error;
-      result = data;
+
+      const userIds = [...new Set((subs ?? []).map((s) => s.user_id))];
+      let profilesById: Record<string, unknown> = {};
+      if (userIds.length) {
+        const { data: profs, error: profErr } = await adminClient
+          .from("profiles")
+          .select("id, name, phone")
+          .in("id", userIds);
+        if (profErr) throw profErr;
+        profilesById = Object.fromEntries((profs ?? []).map((p) => [p.id, p]));
+      }
+      result = (subs ?? []).map((s) => ({ ...s, profiles: profilesById[s.user_id] ?? null }));
     }
 
     // ── Get a signed URL for a KYC document ──────────────────────

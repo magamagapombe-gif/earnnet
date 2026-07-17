@@ -127,6 +127,7 @@ export default function AdminApp() {
       setKycSubmissions(res.data ?? []);
     } catch (e) {
       setKycSubmissions([]);
+      showToast(`Couldn't load KYC submissions: ${e.message}`, "error");
     }
   }
 
