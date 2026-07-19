@@ -2451,34 +2451,77 @@ function EarningsChart({ txns, dark }) {
     if (b) b.total += tx.amount;
   });
   const maxVal = Math.max(...buckets.map(b => b.total), 1);
+  const allZero = buckets.every(b => b.total === 0);
+
+  // Map to an SVG viewBox and build a smooth curve through the 7 points
+  // using per-segment cubic beziers (simple, no external chart lib needed).
+  const W = 300, H = 70, PAD = 8;
+  const pts = buckets.map((b, i) => ({
+    x: PAD + (i / (buckets.length - 1)) * (W - PAD * 2),
+    y: PAD + (1 - b.total / maxVal) * (H - PAD * 2),
+    total: b.total,
+  }));
+  const linePath = pts.reduce((d, p, i) => {
+    if (i === 0) return `M ${p.x} ${p.y}`;
+    const prev = pts[i - 1];
+    const midX = (prev.x + p.x) / 2;
+    return `${d} C ${midX} ${prev.y}, ${midX} ${p.y}, ${p.x} ${p.y}`;
+  }, "");
+  const areaPath = `${linePath} L ${pts[pts.length - 1].x} ${H} L ${pts[0].x} ${H} Z`;
 
   return (
-    <div style={{ background:T.card, borderRadius:14, padding:"16px", margin:"0 16px 16px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
-      <div style={{ fontWeight:600, fontSize:14, marginBottom:16, color:T.text }}>📈 Earnings – last 7 days</div>
-      <div style={{ display:"flex", alignItems:"flex-end", gap:6, height:80 }}>
-        {buckets.map((b, i) => {
-          const pct = Math.max((b.total / maxVal) * 100, b.total > 0 ? 8 : 2);
-          return (
-            <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
-              <div style={{ width:"100%", height:b.total > 0 ? `${pct}%` : "2px", background: b.total > 0 ? BRAND : (dark ? "#2a5040" : "#eee"), borderRadius:4, transition:"height 0.4s ease", minHeight: b.total > 0 ? 4 : 2 }} title={fmt(b.total)} />
-              <div style={{ fontSize:9, color:T.textSub, textAlign:"center" }}>{b.label}</div>
-            </div>
-          );
-        })}
+    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"16px", margin:"0 16px 16px", boxShadow:"none" }}>
+      <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>Earnings – last 7 days</div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:80, display:"block", overflow:"visible" }}>
+        <defs>
+          <linearGradient id="earningsFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={BRAND} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={BRAND} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {!allZero && <path d={areaPath} fill="url(#earningsFill)" stroke="none" />}
+        <path d={linePath} fill="none" stroke={allZero ? (dark ? "#22392F" : "#DBDFDC") : BRAND} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        {!allZero && pts.map((p, i) => p.total > 0 && (
+          <circle key={i} cx={p.x} cy={p.y} r="2.6" fill={BRAND} stroke={T.card} strokeWidth="1.4" />
+        ))}
+      </svg>
+      <div style={{ display:"flex", marginTop:6 }}>
+        {buckets.map((b, i) => (
+          <div key={i} style={{ flex:1, textAlign:"center", fontSize:9, color:T.textSub }}>{b.label}</div>
+        ))}
       </div>
-      {buckets.every(b => b.total === 0) && (
+      {allZero && (
         <div style={{ textAlign:"center", color:T.textSub, fontSize:12, marginTop:8 }}>Complete tasks to see your earnings here</div>
       )}
     </div>
   );
 }
 
+// Small live countdown — "12d 4h", "3h 22m", "38m" — ticks on its own
+// timer so callers don't need to re-render their whole page every minute.
+function Countdown({ target }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, []);
+  const diff = new Date(target).getTime() - now;
+  if (!target || Number.isNaN(diff)) return <>—</>;
+  if (diff <= 0) return <>Matured</>;
+  const days  = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  const mins  = Math.floor((diff % 3600000) / 60000);
+  if (days > 0)  return <>{days}d {hours}h left</>;
+  if (hours > 0) return <>{hours}h {mins}m left</>;
+  return <>{mins}m left</>;
+}
+
 // ── Home Tab ───────────────────────────────────────────────────
 function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWithdraw, onDeposit, onActivate, txns, onGoGrow, investments, referrals, dark }) {
   const T = theme(dark);
-  const tierInfo    = getActiveTier(investments);
   const kycStatus   = profile?.kyc_status ?? kycSubmission?.status ?? "none";
   const kycApproved = kycStatus === "approved";
+  const firstName   = (profile?.name ?? "there").split(" ")[0];
 
   // ── Portfolio buckets — everything needed for an at-a-glance read of
   // the account, pulled from the same fields the Wallet/Grow tabs use so
@@ -2486,6 +2529,7 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
   const activeInvs      = investments?.filter(i => i.status === "active") ?? [];
   const availableToWithdraw = (profile?.balance_earnings ?? 0) + (profile?.balance_referral ?? 0);
   const totalInvested   = profile?.total_invested ?? activeInvs.reduce((s, i) => s + (i.current_principal ?? i.amount ?? 0), 0);
+  const taskEarnings    = activeInvs.reduce((s, i) => s + (i.locked_task_earnings ?? 0), 0);
   const nextMature      = activeInvs.length
     ? [...activeInvs].sort((a, b) => new Date(a.ends_at) - new Date(b.ends_at))[0]
     : null;
@@ -2494,11 +2538,18 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
     { label:"Total balance",         value: fmt(profile?.balance) },
     { label:"Available to withdraw", value: fmt(availableToWithdraw) },
     { label:"Total invested",        value: fmt(totalInvested) },
+    { label:"Task earnings",         value: fmt(taskEarnings) },
     { label:"Tasks completed",       value: String(profile?.tasks_done ?? 0) },
     { label:"Total referrals",       value: String(referrals?.length ?? 0) },
-    { label:"Next to mature",        value: nextMature ? nextMature.plan_name : "None active",
-      sub: nextMature ? new Date(nextMature.ends_at).toLocaleDateString() : "Invest to start a plan" },
   ];
+
+  // ── Dynamic growth suggestion — what to say depends on whether they
+  // hold a plan at all, and if so, what buying one more would add.
+  const dailyEarning   = p => p.taskReward * p.dailyTasks;
+  const currentDaily   = activeInvs.reduce((s, i) => s + (i.task_reward ?? 0) * (i.daily_tasks ?? 0), 0);
+  const highestLevel   = activeInvs.reduce((m, i) => Math.max(m, i.plan_level ?? 0), 0);
+  const suggestedPlan  = VAULT_PLANS.find(p => p.level > highestLevel) ?? VAULT_PLANS[VAULT_PLANS.length - 1];
+  const potentialDaily = currentDaily + dailyEarning(suggestedPlan);
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
@@ -2532,34 +2583,42 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
         </div>
       </div>
 
-      {/* Portfolio at a glance — six buckets, side by side, so the whole
+      {/* Portfolio at a glance — seven buckets, side by side, so the whole
           account status reads in one look without opening another tab. */}
-      <div style={{ padding:"0 16px", marginBottom:16 }}>
+      <div style={{ padding:"0 16px", marginBottom:10 }}>
         <div style={{ fontWeight:600, fontSize:13, color:T.text, marginBottom:8 }}>Your portfolio</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
           {buckets.map(b => (
             <div key={b.label} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"13px 14px", boxShadow:"none" }}>
               <div style={{ fontSize:10.5, color:T.textSub, marginBottom:5 }}>{b.label}</div>
               <div style={{ fontWeight:700, fontSize:16, fontFamily:"'Sora',sans-serif", color:T.text, letterSpacing:"-0.01em", lineHeight:1.2 }}>{b.value}</div>
-              {b.sub && <div style={{ fontSize:10, color:T.textSub, marginTop:3 }}>{b.sub}</div>}
             </div>
           ))}
+          {/* Next to mature gets its own card so its countdown can tick
+              on an independent timer without re-rendering the others. */}
+          <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"13px 14px", boxShadow:"none" }}>
+            <div style={{ fontSize:10.5, color:T.textSub, marginBottom:5 }}>Next to mature</div>
+            <div style={{ fontWeight:700, fontSize:16, fontFamily:"'Sora',sans-serif", color:T.text, letterSpacing:"-0.01em", lineHeight:1.2 }}>
+              {nextMature ? nextMature.plan_name : "None active"}
+            </div>
+            <div style={{ fontSize:10, color:T.textSub, marginTop:3 }}>
+              {nextMature ? <Countdown target={nextMature.ends_at} /> : "Invest to start a plan"}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Earnings chart */}
-      <EarningsChart txns={txns} dark={dark} />
-
-      {/* Grow teaser */}
-      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, margin:"0 16px 12px", padding:"14px 16px", cursor:"pointer", boxShadow:"none" }} onClick={onGoGrow}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div>
-            <div style={{ fontWeight:600, fontSize:14, color:T.text }}>EarnNet Grow</div>
-            <div style={{ fontSize:12, color:T.textSub, marginTop:3 }}>
-              {tierInfo ? `${tierInfo.label} member` : "Invest in a Vault Plan for monthly returns"}
-            </div>
-          </div>
-          <div style={{ background:BRAND_SOFT, color:BRAND_DARK, borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, whiteSpace:"nowrap" }}>Invest →</div>
+      {/* Dynamic growth prompt — no active plan gets a nudge toward Grow;
+          an existing plan holder gets a concrete next-plan suggestion with
+          the combined daily total they'd be earning if they bought it. */}
+      <div style={{ margin:"0 16px 16px", padding:"14px 16px", background: dark ? "#0F2018" : "#F7F8F7", border:`1px solid ${T.border}`, borderRadius:12, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, cursor:"pointer" }} onClick={onGoGrow}>
+        <div style={{ fontSize:12.5, color:T.text, lineHeight:1.5 }}>
+          {activeInvs.length === 0
+            ? <>Hey {firstName}, you don't have an active plan. Tap Grow to get one and start earning daily.</>
+            : <>Hey {firstName}, you can buy another plan — the {suggestedPlan.name} plan would take you to about <strong>{fmt(potentialDaily)}/day</strong> combined.</>}
+        </div>
+        <div style={{ background:BRAND, color:"white", borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, whiteSpace:"nowrap", flexShrink:0 }}>
+          {activeInvs.length === 0 ? "Grow" : "View plan"}
         </div>
       </div>
 
@@ -2814,6 +2873,10 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
           <button style={{ background:"rgba(255,255,255,0.14)", color:"white", border:"1px solid rgba(255,255,255,0.25)", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onDeposit}>Deposit</button>
         </div>
       </div>
+
+      {/* Earnings curve — relocated here from Home so it sits next to the
+          transaction history it's summarizing. */}
+      <EarningsChart txns={txns} dark={dark} />
 
       <div style={{ padding:"0 16px 16px" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
@@ -3962,7 +4025,7 @@ function ReferralTab({ profile, referrals, settings, dark }) {
 
 Earnings depend on your plan: about ${fmt(dailyEarning(lowPlan))}/day on the ${lowPlan.name} plan, up to ${fmt(dailyEarning(highPlan))}+/day on the ${highPlan.name} plan. Bigger plan, bigger daily payout.
 
-Join with my link and start today:
+Join with my link and I earn ${ref1}% when you buy a plan (and ${ref2}% more from anyone you go on to refer) — so I'll help you get set up:
 ${link}
 
 Referral code: ${code}`;
@@ -3984,45 +4047,7 @@ Referral code: ${code}`;
         <button style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={handleShare}>
           {copied ? "Copied — message + link" : "Share invite"}
         </button>
-        <div style={{ fontSize:11, opacity:0.65, marginTop:8 }}>Always sends the pitch below together with your link — never the bare link alone.</div>
-      </div>
-
-      {/* Preview of the message people will get — lets the user see and
-          edit expectations before sending it out. */}
-      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"14px 16px", margin:"0 16px 16px", boxShadow:"none" }}>
-        <div style={{ fontWeight:600, fontSize:13, color:T.text, marginBottom:8 }}>What they'll receive</div>
-        <div style={{ background: dark ? "#0F2018" : "#F7F8F7", border:`1px solid ${T.border}`, borderRadius:9, padding:"12px 14px", fontSize:12.5, color:T.text, whiteSpace:"pre-wrap", lineHeight:1.6, marginBottom:12 }}>
-          {shareMessage}
-        </div>
-        <div style={{ fontSize:11, color:T.textSub, marginBottom:8 }}>Daily earning by plan (task reward × tasks/day)</div>
-        <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(VAULT_PLANS.length, 4)}, 1fr)`, gap:6 }}>
-          {[VAULT_PLANS[0], VAULT_PLANS[Math.floor((VAULT_PLANS.length - 1) / 2)], VAULT_PLANS[VAULT_PLANS.length - 1]].map(p => (
-            <div key={p.level} style={{ textAlign:"center", background: dark ? "#0F2018" : "#F7F8F7", borderRadius:8, padding:"9px 4px" }}>
-              <div style={{ fontSize:9, color:T.textSub, marginBottom:3 }}>{p.name}</div>
-              <div style={{ fontWeight:700, fontSize:12, color:T.text }}>{fmt(dailyEarning(p))}/day</div>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 16px 16px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
-        <div style={{ fontWeight:600, fontSize:14, marginBottom:4, color:T.text }}>Commission rates</div>
-        <div style={{ fontSize:11, color:T.textSub, marginBottom:14 }}>Paid when someone in your referral tree buys a growth plan — two levels deep.</div>
-        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-          <div style={{ width:38, height:38, borderRadius:10, background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>🥇</div>
-          <div style={{ flex:1 }}>
-            <div style={{ fontSize:13, color:T.text, fontWeight:600 }}>Level 1 — people you directly refer</div>
-            <div style={{ fontSize:11, color:T.textSub }}>When they buy any growth plan</div>
-          </div>
-          <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:15 }}>{ref1}%</div>
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <div style={{ width:38, height:38, borderRadius:10, background:"#E6F1FB", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>🥈</div>
-          <div style={{ flex:1 }}>
-            <div style={{ fontSize:13, color:T.text, fontWeight:600 }}>Level 2 — people they refer</div>
-            <div style={{ fontSize:11, color:T.textSub }}>When those people buy any growth plan</div>
-          </div>
-          <div style={{ fontWeight:700, color:"#185FA5", fontSize:15 }}>{ref2}%</div>
-        </div>
+        <div style={{ fontSize:11, opacity:0.65, marginTop:8 }}>Sends a ready-made invite pitch together with your link — recipients don't need anything else from you.</div>
       </div>
       <div style={{ padding:"0 16px" }}>
         <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>Your referrals ({referrals.length})</div>
