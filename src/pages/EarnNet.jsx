@@ -725,6 +725,58 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const refreshProfileRef = useRef(refreshProfile);
   useEffect(() => { refreshProfileRef.current = refreshProfile; }, [refreshProfile]);
 
+  // ── Pending-investment recovery ──────────────────────────────
+  // Buying a plan via mobile money is a two-step process: LivePay credits
+  // the raw payment into profile.balance, then the app (while InvestModal
+  // is open and polling) calls buyInvestmentPlan() to actually deduct it
+  // and activate the plan. If the phone locks, the user switches apps to
+  // check their confirmation SMS, or the tab/app closes before that
+  // polling finishes, the payment can land with nobody left to finish the
+  // purchase — the user is charged but gets no plan.
+  //
+  // InvestModal writes a small "payment in flight" record to localStorage
+  // right after the STK push is sent. This effect re-checks that record
+  // on every app mount, window focus, and tab-visibility change — not
+  // just while the modal happens to still be mounted — so a payment that
+  // lands after the app was backgrounded/closed still gets completed.
+  const recoverPendingInvestment = useCallback(async () => {
+    const key = `earnnet_pending_invest_${uid}`;
+    let intent;
+    try { intent = JSON.parse(localStorage.getItem(key) ?? "null"); } catch { intent = null; }
+    if (!intent) return;
+
+    // LivePay prompts resolve in minutes, not hours — drop anything this
+    // old rather than risk buying a plan off an unrelated later balance
+    // change (a task payout, another deposit, etc).
+    if (Date.now() - intent.requestedAt > 3 * 60 * 60 * 1000) {
+      localStorage.removeItem(key);
+      return;
+    }
+
+    try {
+      const fresh = await getProfile(uid);
+      if (!fresh || fresh.balance <= intent.startedBalance) return; // payment hasn't landed yet — check again later
+      await buyInvestmentPlan(uid, intent.level, intent.autoMode ? "auto" : "manual");
+      localStorage.removeItem(key);
+      await refreshProfileRef.current();
+      showToast(`✅ Your plan purchase completed — your payment had landed after the app closed.`, "success");
+    } catch {
+      // Leave the record in place and retry on the next check rather than
+      // silently dropping a payment we can't yet account for.
+    }
+  }, [uid]);
+
+  useEffect(() => {
+    recoverPendingInvestment();
+    const onVisible = () => { if (document.visibilityState === "visible") recoverPendingInvestment(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [recoverPendingInvestment]);
+
   const loadTasks = useCallback(async () => {
     setTaskLoading(true);
     try { setTasks(await getActiveTasks(uid)); } catch {}
@@ -946,12 +998,20 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
 
       {/* Bottom nav */}
       <nav style={{ display:"flex", background:T.navBg, borderTop:`0.5px solid ${T.border}`, position:"sticky", bottom:0, zIndex:50 }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"10px 0", background:"none", border:"none", color: tab === t.id ? BRAND : T.textSub, cursor:"pointer", transition:"color 0.15s" }}>
-            <span style={{ fontSize:22 }}>{t.icon}</span>
-            <span style={{ fontSize:10, marginTop:2 }}>{t.label}</span>
-          </button>
-        ))}
+        {tabs.map(t => {
+          const active = tab === t.id;
+          return (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ position:"relative", flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 0 9px", background:"none", border:"none", color: active ? BRAND : T.textSub, cursor:"pointer", transition:"color 0.15s" }}>
+              {active && <span style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:24, height:3, borderRadius:"0 0 3px 3px", background:BRAND }} />}
+              <span style={{
+                fontSize:20, lineHeight:1, width:36, height:26, display:"flex", alignItems:"center", justifyContent:"center",
+                borderRadius:10, background: active ? (dark ? "rgba(29,158,117,0.22)" : "#E1F5EE") : "transparent",
+                transition:"background 0.15s"
+              }}>{t.icon}</span>
+              <span style={{ fontSize:10, marginTop:1, fontWeight: active ? 700 : 500 }}>{t.label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       {withdrawModal && <WithdrawModal profile={profile} settings={settings} investments={investments} userId={uid} kycSubmission={kycSubmission} onStartKyc={() => { setWithdrawModal(false); setKycModal(true); }} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
@@ -3129,11 +3189,14 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
 
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
+  const pendingKey = `earnnet_pending_invest_${userId}`;
+
   // Poll for balance change after LivePay prompt
   const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
     // Payment confirmed — now activate the plan in DB
     try {
       await buyInvestmentPlan(userId, plan.level, autoMode ? "auto" : "manual");
+      try { localStorage.removeItem(pendingKey); } catch {}
       setStep("success");
       await onSuccess();
     } catch (e) {
@@ -3164,8 +3227,18 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
     if (!phone) return setErr("Enter your mobile money number");
     setLoading(true);
     try {
+      const startedBalance = profile?.balance ?? 0;
       await requestInvestmentPayment(userId, totalCharge, method, phone);
-      startPolling(profile?.balance ?? 0);
+      // Payment has been requested — a payment in flight now, even if this
+      // modal never gets the chance to see it land (app backgrounded,
+      // tab closed, phone locked). MainApp's recovery effect will finish
+      // the purchase later if that happens.
+      try {
+        localStorage.setItem(pendingKey, JSON.stringify({
+          level: plan.level, autoMode, startedBalance, requestedAt: Date.now(),
+        }));
+      } catch {}
+      startPolling(startedBalance);
       setStep("waiting");
     } catch (e) {
       setErr(e.message ?? "Payment request failed");
@@ -3218,6 +3291,9 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           <button onClick={() => { stopPolling(); setStep("confirm"); }} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"10px 24px", fontSize:13, color:T.textSub, cursor:"pointer" }}>
             Cancel
           </button>
+          <div style={{ fontSize:11, color:T.textSub, marginTop:14, lineHeight:1.5 }}>
+            If you already entered your PIN, your plan will still activate automatically once the payment lands — even from here.
+          </div>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </div>
