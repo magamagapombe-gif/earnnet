@@ -621,9 +621,9 @@ function LoginScreen({ onSwitch, dark, toggleDark }) {
         <p style={{ fontSize:13, color:T.textSub, marginBottom:22 }}>Sign in to continue earning</p>
         {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:4, marginTop:10 }}>{err}</div>}
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Phone number</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:16, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Password</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="password" placeholder="••••••••" value={pwd} onChange={e => setPwd(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:16, background:T.inputBg, color:T.text }} type="password" placeholder="••••••••" value={pwd} onChange={e => setPwd(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} />
         <button style={{ ...S.primaryBtn, marginTop:18 }} onClick={handleLogin} disabled={loading}>{loading ? "Signing in..." : "Sign in →"}</button>
         <p style={{ textAlign:"center", marginTop:20, fontSize:13, color:T.textSub }}>New here? <button style={{ background:"none", border:"none", color:BRAND, fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onSwitch}>Create account</button></p>
       </div>
@@ -667,7 +667,7 @@ function RegisterScreen({ onSwitch, defaultRef, settings, dark, toggleDark }) {
         {[["Full name","text","Your name",name,setName],["Phone number","tel","0700 000 000",phone,setPhone],["Password","password","Min 6 characters",pwd,setPwd],["Referral code (optional)","text","e.g. ABC123",refCode,setRefCode]].map(([lbl,type,ph,val,set]) => (
           <div key={lbl}>
             <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>{lbl}</label>
-            <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type={type} placeholder={ph} value={val} onChange={e => set(e.target.value)} />
+            <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:16, background:T.inputBg, color:T.text }} type={type} placeholder={ph} value={val} onChange={e => set(e.target.value)} />
           </div>
         ))}
         <button style={{ ...S.primaryBtn, marginTop:18 }} onClick={handleRegister} disabled={loading}>{loading ? "Creating account..." : "Join & start earning →"}</button>
@@ -949,7 +949,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   return (
     <div style={{ display:"flex", flexDirection:"column", minHeight:"100vh", background:T.bg, maxWidth:480, margin:"0 auto", transition:"background 0.3s" }}>
       {/* Header */}
-      <header style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"13px 16px", background:T.headerBg, borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:50 }}>
+      <header style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"13px 16px", background:T.headerBg, borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:160 }}>
         <div style={{ display:"flex", alignItems:"center", gap:9 }}>
           <div style={{ ...S.logoMark, width:30, height:30, fontSize:14 }}>E</div>
           <span style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:16, color:T.text, letterSpacing:"-0.01em" }}>EarnNet</span>
@@ -1019,11 +1019,6 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
           </div>
         </div>
       </header>
-
-      {/* Balance pill below header */}
-      <div style={{ padding:"8px 16px 0", display:"flex", justifyContent:"flex-end" }}>
-        <div style={{ background:"#E1F5EE", color:BRAND_DARK, padding:"5px 12px", borderRadius:20, fontSize:12, fontWeight:600 }}>{fmt(profile?.balance)}</div>
-      </div>
 
       <main style={{ flex:1, overflowY:"auto", paddingTop:4 }}>
         {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} kycSubmission={kycSubmission} onStartKyc={() => setKycModal(true)} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} referrals={referrals} dark={dark} />}
@@ -1162,12 +1157,12 @@ function ActivateModal({ settings, userId, currentBalance, profile, onClose, onS
         </div>
         {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:4 }}>{err}</div>}
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Mobile money number</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:16, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
         <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", marginTop:6, fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5" }}>
           {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
         </div>
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Your mobile money number</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:16, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
         <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:12, color:BRAND_DARK, margin:"14px 0" }}>
           ✅ Your account activates automatically once payment is confirmed — no waiting!
         </div>
@@ -1285,7 +1280,7 @@ function DepositModal({ settings, userId, currentBalance, profile, onClose, onSu
         </div>
         {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:4 }}>{err}</div>}
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:4 }}>Amount (UGX)</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(minDeposit)}`} value={amount} onChange={e => setAmount(e.target.value)} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:16, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(minDeposit)}`} value={amount} onChange={e => setAmount(e.target.value)} />
         <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
           {quickAmounts.map(a => (
             <button key={a} onClick={() => setAmount(String(a))}
@@ -1308,12 +1303,12 @@ function DepositModal({ settings, userId, currentBalance, profile, onClose, onSu
           </div>
         )}
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Payment method</label>
-        <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
+        <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:16, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
           <option value="mtn">MTN Mobile Money</option>
           <option value="airtel">Airtel Money</option>
         </select>
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Mobile money number</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:16, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
         <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", marginTop:6, marginBottom:8, fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5" }}>
           {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
         </div>
@@ -1744,19 +1739,99 @@ function YoutubeSubscribeTask({ task: t, profile, onBack, onComplete, dark }) {
   );
 }
 
+// ── Live in-page camera (getUserMedia) ───────────────────────────
+// The old "Take photo" button used <input capture="environment">,
+// which just launches the OS's native camera app as a separate
+// screen — React has no visibility into or control over that screen
+// at all. On some webviews/in-app browsers (WhatsApp, Facebook,
+// Instagram in-app browsers, some Android OEM webviews) that native
+// camera intent opens but renders a blank/black preview even though
+// the device camera itself works fine everywhere else. Requesting
+// the camera stream directly with getUserMedia and rendering it in
+// a normal <video> element inside our own page sidesteps that native
+// intent entirely, so it works consistently across those environments.
+function LiveCameraModal({ onCapture, onClose, dark }) {
+  const T = theme(dark);
+  const videoRef  = useRef(null);
+  const streamRef = useRef(null);
+  const [error, setError]     = useState("");
+  const [ready, setReady]     = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+        setReady(true);
+      } catch (e) {
+        setError(
+          e?.name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in your browser settings, or use the gallery option instead."
+          : e?.name === "NotFoundError" ? "No camera was found on this device. Use the gallery option instead."
+          : "Couldn't start the camera. Use the gallery option instead."
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
+  const handleCapture = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width  = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      const file = new File([blob], `capture-${Date.now()}.jpg`, { type: "image/jpeg" });
+      onCapture(file);
+    }, "image/jpeg", 0.9);
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"black", zIndex:400, display:"flex", flexDirection:"column" }}>
+      <div style={{ flex:1, position:"relative", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        {error ? (
+          <div style={{ color:"white", textAlign:"center", padding:24, fontSize:14, lineHeight:1.6, maxWidth:300 }}>{error}</div>
+        ) : (
+          <video ref={videoRef} playsInline muted style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+        )}
+      </div>
+      <div style={{ padding:"18px 20px 28px", display:"flex", alignItems:"center", justifyContent:"space-between", background:"rgba(0,0,0,0.4)" }}>
+        <button type="button" onClick={onClose} style={{ background:"rgba(255,255,255,0.15)", color:"white", border:"none", borderRadius:8, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          Cancel
+        </button>
+        {!error && (
+          <button type="button" onClick={handleCapture} disabled={!ready}
+            style={{ width:64, height:64, borderRadius:"50%", background:"white", border:"4px solid rgba(255,255,255,0.4)", cursor: ready ? "pointer" : "default", opacity: ready ? 1 : 0.5 }} />
+        )}
+        <div style={{ width:76 }} />
+      </div>
+    </div>
+  );
+}
+
 // ── Photo upload field (camera or gallery) ──────────────────────
-// A plain <input type="file" accept="image/*"> alone works on most
-// mobile browsers (they show a chooser with Camera / Photos / Files),
-// but not reliably on all of them, and offers no explicit camera
-// affordance on desktop webcams. Give two explicit, always-visible
-// entry points instead: one input with capture="environment" that
-// opens the camera directly, and one plain input that opens the
-// gallery/file picker — so someone with no photos already on their
-// phone can still complete the upload by snapping one.
+// "Take photo" opens our own in-page camera (see LiveCameraModal
+// above) instead of the OS camera intent, since that intent renders
+// blank on some webviews. "Choose from gallery" stays a plain file
+// input — that keeps working everywhere as a fallback either way.
 function PhotoUploadField({ data, name, onPick, dark, compact }) {
   const T = theme(dark);
-  const cameraRef  = useRef(null);
   const galleryRef = useRef(null);
+  const [showCamera, setShowCamera] = useState(false);
   const pad = compact ? "18px" : "24px";
   return (
     <div>
@@ -1773,7 +1848,7 @@ function PhotoUploadField({ data, name, onPick, dark, compact }) {
           </div>
         )}
         <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"center" }}>
-          <button type="button" onClick={() => cameraRef.current?.click()}
+          <button type="button" onClick={() => setShowCamera(true)}
             style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"9px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
             📷 Take photo
           </button>
@@ -1783,10 +1858,15 @@ function PhotoUploadField({ data, name, onPick, dark, compact }) {
           </button>
         </div>
       </div>
-      {/* Direct-to-camera input, for when the user has no photos saved yet */}
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
       {/* Regular gallery/file picker */}
       <input ref={galleryRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
+      {showCamera && (
+        <LiveCameraModal
+          dark={dark}
+          onClose={() => setShowCamera(false)}
+          onCapture={file => { onPick(file); setShowCamera(false); }}
+        />
+      )}
     </div>
   );
 }
@@ -2528,7 +2608,7 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
   // the numbers always agree with the rest of the app.
   const activeInvs      = investments?.filter(i => i.status === "active") ?? [];
   const availableToWithdraw = (profile?.balance_earnings ?? 0) + (profile?.balance_referral ?? 0);
-  const totalInvested   = profile?.total_invested ?? activeInvs.reduce((s, i) => s + (i.current_principal ?? i.amount ?? 0), 0);
+  const totalInvested   = profile?.total_invested ?? activeInvs.reduce((s, i) => s + (i.current_principal || i.amount || 0), 0);
   const taskEarnings    = activeInvs.reduce((s, i) => s + (i.locked_task_earnings ?? 0), 0);
   const nextMature      = activeInvs.length
     ? [...activeInvs].sort((a, b) => new Date(a.ends_at) - new Date(b.ends_at))[0]
@@ -2553,15 +2633,6 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
-      {profile?.activated && !kycApproved && kycStatus !== "pending" && (
-        <div style={{ margin:"12px 16px 0", background:T.card, border:`1px solid ${GOLD}`, borderRadius:10, padding:"12px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onStartKyc}>
-          <div>
-            <div style={{ fontWeight:600, fontSize:13, color:T.text }}>Verify your ID</div>
-            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Required before your first withdrawal</div>
-          </div>
-          <button style={{ background:GOLD, color:"white", border:"none", borderRadius:7, padding:"6px 12px", fontSize:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>Verify</button>
-        </div>
-      )}
       {!profile?.activated && (
         <div style={{ margin:"12px 16px 0", background:T.card, border:`1px solid ${GOLD}`, borderRadius:10, padding:"12px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onActivate}>
           <div>
@@ -2580,6 +2651,9 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
           <button style={{ background:BRAND, color:"white", border:"none", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onWithdraw}>Withdraw</button>
           <button style={{ background:"rgba(255,255,255,0.14)", color:"white", border:"1px solid rgba(255,255,255,0.25)", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onDeposit}>Deposit</button>
           <button style={{ background:"transparent", color:"white", border:"1px solid rgba(255,255,255,0.25)", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onGoTasks}>Earn →</button>
+          {profile?.activated && !kycApproved && kycStatus !== "pending" && (
+            <button style={{ background:GOLD, color:"white", border:"none", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onStartKyc}>Verify ID</button>
+          )}
         </div>
       </div>
 
@@ -2894,7 +2968,7 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
         <select
           value={view}
           onChange={e => setView(e.target.value)}
-          style={{ width:"100%", padding:"10px 14px", borderRadius:10, border:`1px solid ${T.chipBrd}`, background:T.chipBg, color:T.text, fontSize:13, fontWeight:600, cursor:"pointer", appearance:"none", WebkitAppearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%230F6E56' stroke-width='2' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center" }}
+          style={{ width:"100%", padding:"10px 14px", borderRadius:10, border:`1px solid ${T.chipBrd}`, background:T.chipBg, color:T.text, fontSize:16, fontWeight:600, cursor:"pointer", appearance:"none", WebkitAppearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%230F6E56' stroke-width='2' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center" }}
         >
           <option value="transactions">Transactions ({visibleTxns.length})</option>
           <option value="withdrawals">Withdrawals ({visibleWithdrawals.length})</option>
@@ -3138,7 +3212,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
             // way — what releases at completion is current_principal, the
             // original amount plus anything the user chose to reinvest into
             // it on a month when the referral condition wasn't met.
-            const principalOut = inv.current_principal ?? inv.amount;
+            const principalOut = inv.current_principal || inv.amount;
             const bonus         = principalOut - inv.amount;
             return (
               <div key={inv.id} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"13px 15px", marginBottom:8, boxShadow:"none" }}>
@@ -3185,7 +3259,14 @@ function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefres
   const cycleNumber  = inv.cycle_number ?? 0;
   const cyclesTotal  = 12;
   const cyclePct     = Math.min(100, Math.round((cycleNumber / cyclesTotal) * 100));
-  const currentPrincipal = inv.current_principal ?? inv.amount;
+  // current_principal is meant to mirror the plan amount until a cycle
+  // releases part of it — but some rows were inserted before that column
+  // was backfilled, so it comes back as 0 instead of null. `??` only
+  // falls back on null/undefined, so a real 0 slips through and the card
+  // shows "0" for a plan that's actually fully funded. Treat 0 the same
+  // as unset here — an *active* plan's locked principal is never
+  // legitimately 0.
+  const currentPrincipal = inv.current_principal || inv.amount;
   const [enabling, setEnabling]   = useState(false);
   const [err, setErr]             = useState("");
 
@@ -3526,7 +3607,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           {payWith === "mobile" && (
             <>
               <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Mobile money number</label>
-              <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text, marginBottom:8 }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
+              <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:16, background:T.inputBg, color:T.text, marginBottom:8 }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
               <div style={{ background: method === "mtn" ? "#FBF1DE" : "#E7EEF5", borderRadius:7, padding:"8px 12px", fontSize:12, fontWeight:600, color: method === "mtn" ? "#8A6416" : "#33587A", marginBottom:16 }}>
                 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
               </div>
@@ -3556,7 +3637,7 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
   // What's actually available is current_principal — the original amount
   // plus anything folded in via reinvest_held_profit along the way.
   // Monthly profit was already paid out cycle by cycle, not bundled here.
-  const payoutAvailable = maturedInv.current_principal ?? maturedInv.amount;
+  const payoutAvailable = maturedInv.current_principal || maturedInv.amount;
 
   // Default to the same tier they were in, if it's still active; else the highest plan they can afford
   const defaultPlan = plans.find(p => p.name === maturedInv.plan_name)
@@ -3608,7 +3689,7 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
           </div>
 
           <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Plan</label>
-          <select style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text, marginBottom:14 }} value={planLevel} onChange={e => setPlanLevel(Number(e.target.value))}>
+          <select style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:16, background:T.inputBg, color:T.text, marginBottom:14 }} value={planLevel} onChange={e => setPlanLevel(Number(e.target.value))}>
             {plans.map(p => <option key={p.level} value={p.level}>{p.name} — {fmt(p.amount)}</option>)}
           </select>
 
@@ -3882,14 +3963,14 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
         )}
 
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Amount (UGX)</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(min)}`} value={amount} onChange={e => setAmount(e.target.value)} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:16, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(min)}`} value={amount} onChange={e => setAmount(e.target.value)} />
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Method</label>
-        <select style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
+        <select style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:16, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
           <option value="mtn">MTN Mobile Money</option>
           <option value="airtel">Airtel Money</option>
         </select>
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Mobile money number</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:16, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
         <button style={{ ...S.primaryBtn, marginTop:14, padding:"12px 0" }} onClick={handleSubmit} disabled={loading}>
           {loading ? "Submitting..." : "Request withdrawal"}
         </button>
@@ -4048,6 +4129,26 @@ Referral code: ${code}`;
           {copied ? "Copied — message + link" : "Share invite"}
         </button>
         <div style={{ fontSize:11, opacity:0.65, marginTop:8 }}>Sends a ready-made invite pitch together with your link — recipients don't need anything else from you.</div>
+      </div>
+      <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 16px 16px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
+        <div style={{ fontWeight:600, fontSize:14, marginBottom:4, color:T.text }}>Commission rates</div>
+        <div style={{ fontSize:11, color:T.textSub, marginBottom:14 }}>Paid when someone in your referral tree buys a growth plan — two levels deep.</div>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+          <div style={{ width:38, height:38, borderRadius:10, background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>🥇</div>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:13, color:T.text, fontWeight:600 }}>Level 1 — people you directly refer</div>
+            <div style={{ fontSize:11, color:T.textSub }}>When they buy any growth plan</div>
+          </div>
+          <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:15 }}>{ref1}%</div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <div style={{ width:38, height:38, borderRadius:10, background:"#E6F1FB", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>🥈</div>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:13, color:T.text, fontWeight:600 }}>Level 2 — people they refer</div>
+            <div style={{ fontSize:11, color:T.textSub }}>When those people buy any growth plan</div>
+          </div>
+          <div style={{ fontWeight:700, color:"#185FA5", fontSize:15 }}>{ref2}%</div>
+        </div>
       </div>
       <div style={{ padding:"0 16px" }}>
         <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>Your referrals ({referrals.length})</div>
