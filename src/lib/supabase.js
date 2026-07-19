@@ -481,11 +481,15 @@ export async function reinvestFromBalance(userId, planLevel) {
 }
 
 /**
- * Request payment for an investment plan via LivePay.
- * Returns when the MoMo prompt has been sent — poll for balance
- * change using useDepositPolling, then call buyInvestmentPlan.
+ * Request payment for an investment plan via LivePay. Tags the deposit
+ * server-side as purpose "investment" with the plan level and mode, so
+ * the livepay-webhook can complete the purchase itself the moment the
+ * payment is confirmed — it no longer depends on this client still
+ * being open to see the balance change and call buyInvestmentPlan.
+ * Local polling (useDepositPolling) still runs too, purely so the UI
+ * can show the success screen promptly if the app IS still open.
  */
-export async function requestInvestmentPayment(userId, amount, method, phone) {
+export async function requestInvestmentPayment(userId, amount, method, phone, planLevel, mode = "manual") {
   const { data: { session } } = await supabase.auth.getSession();
   const res = await fetch(
     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/livepay-payment`,
@@ -495,7 +499,7 @@ export async function requestInvestmentPayment(userId, amount, method, phone) {
         "Content-Type":  "application/json",
         "Authorization": `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ action: "deposit", userId, amount, method, phone }),
+      body: JSON.stringify({ action: "deposit", userId, amount, method, phone, purpose: "investment", planLevel, mode }),
     }
   );
   const data = await res.json();

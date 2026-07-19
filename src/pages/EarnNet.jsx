@@ -208,7 +208,7 @@ function useDarkMode() {
 }
 
 // ── Deposit polling hook ───────────────────────────────────────
-function useDepositPolling(userId, onSuccess) {
+function useDepositPolling(userId, onSuccess, customCheck) {
   const [polling, setPolling]     = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const intervalRef               = useRef(null);
@@ -228,17 +228,29 @@ function useDepositPolling(userId, onSuccess) {
     intervalRef.current = setInterval(async () => {
       attempts++;
       try {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("balance")
-          .eq("id", userId)
-          .single();
+        if (customCheck) {
+          const result = await customCheck();
+          if (result) {
+            clearInterval(intervalRef.current);
+            setPolling(false);
+            setConfirmed(true);
+            onSuccess(result);
+            return;
+          }
+        } else {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("balance")
+            .eq("id", userId)
+            .single();
 
-        if (profile && profile.balance > startedBalanceRef.current) {
-          clearInterval(intervalRef.current);
-          setPolling(false);
-          setConfirmed(true);
-          onSuccess(profile.balance);
+          if (profile && profile.balance > startedBalanceRef.current) {
+            clearInterval(intervalRef.current);
+            setPolling(false);
+            setConfirmed(true);
+            onSuccess(profile.balance);
+            return;
+          }
         }
       } catch { /* keep polling */ }
 
@@ -725,20 +737,19 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const refreshProfileRef = useRef(refreshProfile);
   useEffect(() => { refreshProfileRef.current = refreshProfile; }, [refreshProfile]);
 
-  // ── Pending-investment recovery ──────────────────────────────
-  // Buying a plan via mobile money is a two-step process: LivePay credits
-  // the raw payment into profile.balance, then the app (while InvestModal
-  // is open and polling) calls buyInvestmentPlan() to actually deduct it
-  // and activate the plan. If the phone locks, the user switches apps to
-  // check their confirmation SMS, or the tab/app closes before that
-  // polling finishes, the payment can land with nobody left to finish the
-  // purchase — the user is charged but gets no plan.
+  // ── Pending-investment recovery (fallback) ───────────────────
+  // The webhook (see livepay-webhook) now completes the plan purchase
+  // itself the moment payment is confirmed — using the plan_level/mode
+  // tagged on the deposit at request time — so it no longer depends on
+  // this client being open. This effect is now just a fallback for the
+  // rare case the webhook's purchase step itself failed after a
+  // successful credit (e.g. a transient RPC error): if money landed in
+  // the wallet but no matching investment shows up after a reasonable
+  // wait, finish the purchase from here instead.
   //
   // InvestModal writes a small "payment in flight" record to localStorage
   // right after the STK push is sent. This effect re-checks that record
-  // on every app mount, window focus, and tab-visibility change — not
-  // just while the modal happens to still be mounted — so a payment that
-  // lands after the app was backgrounded/closed still gets completed.
+  // on every app mount, window focus, and tab-visibility change.
   const recoverPendingInvestment = useCallback(async () => {
     const key = `earnnet_pending_invest_${uid}`;
     let intent;
@@ -754,6 +765,20 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     }
 
     try {
+      // If the webhook already completed the purchase, there's a matching
+      // investment for this plan created at/after the request — checking
+      // this first avoids buying it a second time in the race window
+      // where the webhook and this effect could otherwise run close
+      // together.
+      const existingInvs = await getUserInvestments(uid);
+      const alreadyPurchased = existingInvs.some(inv =>
+        inv.plan_level === intent.level && new Date(inv.starts_at).getTime() >= intent.requestedAt
+      );
+      if (alreadyPurchased) {
+        localStorage.removeItem(key);
+        return;
+      }
+
       const fresh = await getProfile(uid);
       if (!fresh || fresh.balance <= intent.startedBalance) return; // payment hasn't landed yet — check again later
       await buyInvestmentPlan(uid, intent.level, intent.autoMode ? "auto" : "manual");
@@ -3190,20 +3215,29 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
   const pendingKey = `earnnet_pending_invest_${userId}`;
+  const requestedAtRef = useRef(0);
 
-  // Poll for balance change after LivePay prompt
-  const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
-    // Payment confirmed — now activate the plan in DB
-    try {
-      await buyInvestmentPlan(userId, plan.level, autoMode ? "auto" : "manual");
+  // Poll for the purchase completing after the LivePay prompt. The webhook
+  // now completes the purchase itself server-side (see livepay-webhook),
+  // so this just detects that it happened and refreshes the UI — it does
+  // NOT call buyInvestmentPlan itself, since doing so here too would risk
+  // a double purchase. Checking for the investment record directly (via
+  // customCheck) also avoids a race where the webhook's credit-then-debit
+  // round trip nets out to "no balance increase visible" from here.
+  const { startPolling, stopPolling } = useDepositPolling(
+    userId,
+    async () => {
       try { localStorage.removeItem(pendingKey); } catch {}
       setStep("success");
       await onSuccess();
-    } catch (e) {
-      setErr(e.message ?? "Investment failed after payment");
-      setStep("confirm");
+    },
+    async () => {
+      try {
+        const fresh = await getUserInvestments(userId);
+        return fresh.some(inv => inv.plan_level === plan.level && new Date(inv.starts_at).getTime() >= requestedAtRef.current);
+      } catch { return false; }
     }
-  });
+  );
 
   const handleSubmit = async () => {
     setErr("");
@@ -3228,14 +3262,17 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
     setLoading(true);
     try {
       const startedBalance = profile?.balance ?? 0;
-      await requestInvestmentPayment(userId, totalCharge, method, phone);
+      const requestedAt = Date.now();
+      requestedAtRef.current = requestedAt;
+      await requestInvestmentPayment(userId, totalCharge, method, phone, plan.level, autoMode ? "auto" : "manual");
       // Payment has been requested — a payment in flight now, even if this
       // modal never gets the chance to see it land (app backgrounded,
-      // tab closed, phone locked). MainApp's recovery effect will finish
-      // the purchase later if that happens.
+      // tab closed, phone locked). The webhook will complete the purchase
+      // on its own; MainApp's recovery effect is a fallback only for the
+      // rare case the webhook itself couldn't (see its comments).
       try {
         localStorage.setItem(pendingKey, JSON.stringify({
-          level: plan.level, autoMode, startedBalance, requestedAt: Date.now(),
+          level: plan.level, autoMode, startedBalance, requestedAt,
         }));
       } catch {}
       startPolling(startedBalance);

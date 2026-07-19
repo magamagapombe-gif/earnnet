@@ -32,7 +32,7 @@ serve(async (req) => {
       });
     }
 
-    const { action, amount, phone, method, userId, purpose, bucket } = await req.json();
+    const { action, amount, phone, method, userId, purpose, bucket, planLevel, mode } = await req.json();
 
     // Ensure the user can only act on their own account
     if (userId !== user.id) {
@@ -53,6 +53,8 @@ serve(async (req) => {
       const chargedAmount = amount + platformFee; // user pays this (e.g. 10000 + 300 = 10300)
       // amount is credited to wallet; chargedAmount is collected from phone
 
+      const isInvestment = purpose === "investment";
+
       // 1. Insert deposit record as "pending"
       const { data: deposit, error: dbErr } = await supabase
         .from("deposits")
@@ -65,7 +67,9 @@ serve(async (req) => {
           phone_number: phone,
           status:       "pending",
           reference,
-          purpose:      purpose === "activation" ? "activation" : "wallet_topup",
+          purpose:      purpose === "activation" ? "activation" : isInvestment ? "investment" : "wallet_topup",
+          plan_level:   isInvestment ? planLevel : null,
+          plan_mode:    isInvestment ? (mode ?? "manual") : null,
         })
         .select()
         .single();
@@ -85,7 +89,7 @@ serve(async (req) => {
           amount:        chargedAmount,
           currency:      "UGX",
           reference,
-          description:   purpose === "activation" ? "EarnNet account activation" : "EarnNet wallet deposit",
+          description:   purpose === "activation" ? "EarnNet account activation" : isInvestment ? "EarnNet plan purchase" : "EarnNet wallet deposit",
         }),
       });
 
