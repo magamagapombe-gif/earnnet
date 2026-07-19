@@ -2475,6 +2475,26 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
   const kycStatus   = profile?.kyc_status ?? kycSubmission?.status ?? "none";
   const kycApproved = kycStatus === "approved";
 
+  // ── Portfolio buckets — everything needed for an at-a-glance read of
+  // the account, pulled from the same fields the Wallet/Grow tabs use so
+  // the numbers always agree with the rest of the app.
+  const activeInvs      = investments?.filter(i => i.status === "active") ?? [];
+  const availableToWithdraw = (profile?.balance_earnings ?? 0) + (profile?.balance_referral ?? 0);
+  const totalInvested   = profile?.total_invested ?? activeInvs.reduce((s, i) => s + (i.current_principal ?? i.amount ?? 0), 0);
+  const nextMature      = activeInvs.length
+    ? [...activeInvs].sort((a, b) => new Date(a.ends_at) - new Date(b.ends_at))[0]
+    : null;
+
+  const buckets = [
+    { label:"Total balance",         value: fmt(profile?.balance) },
+    { label:"Available to withdraw", value: fmt(availableToWithdraw) },
+    { label:"Total invested",        value: fmt(totalInvested) },
+    { label:"Tasks completed",       value: String(profile?.tasks_done ?? 0) },
+    { label:"Total referrals",       value: String(referrals?.length ?? 0) },
+    { label:"Next to mature",        value: nextMature ? nextMature.plan_name : "None active",
+      sub: nextMature ? new Date(nextMature.ends_at).toLocaleDateString() : "Invest to start a plan" },
+  ];
+
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
       {profile?.activated && !kycApproved && kycStatus !== "pending" && (
@@ -2507,6 +2527,21 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
         </div>
       </div>
 
+      {/* Portfolio at a glance — six buckets, side by side, so the whole
+          account status reads in one look without opening another tab. */}
+      <div style={{ padding:"0 16px", marginBottom:16 }}>
+        <div style={{ fontWeight:600, fontSize:13, color:T.text, marginBottom:8 }}>Your portfolio</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          {buckets.map(b => (
+            <div key={b.label} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"13px 14px", boxShadow:"none" }}>
+              <div style={{ fontSize:10.5, color:T.textSub, marginBottom:5 }}>{b.label}</div>
+              <div style={{ fontWeight:700, fontSize:16, fontFamily:"'Sora',sans-serif", color:T.text, letterSpacing:"-0.01em", lineHeight:1.2 }}>{b.value}</div>
+              {b.sub && <div style={{ fontSize:10, color:T.textSub, marginTop:3 }}>{b.sub}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Earnings chart */}
       <EarningsChart txns={txns} dark={dark} />
 
@@ -2521,15 +2556,6 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
           </div>
           <div style={{ background:BRAND_SOFT, color:BRAND_DARK, borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, whiteSpace:"nowrap" }}>Invest →</div>
         </div>
-      </div>
-
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, margin:"0 16px 16px" }}>
-        {[{ label:"Tasks done", value:profile?.tasks_done ?? 0 },{ label:"Referrals", value:referrals?.length ?? 0 }].map(s => (
-          <div key={s.label} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"14px 16px", margin:0, boxShadow:"none" }}>
-            <div style={{ fontWeight:700, fontSize:22, fontFamily:"'Sora',sans-serif", color:T.text }}>{s.value}</div>
-            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{s.label}</div>
-          </div>
-        ))}
       </div>
 
     </div>
@@ -3936,15 +3962,12 @@ ${link}
 
 Referral code: ${code}`;
 
-  const [copied, setCopied] = useState(""); // "" | "message" | "link"
-  const copyText = (text, which) => {
-    navigator.clipboard.writeText(text).then(() => { setCopied(which); setTimeout(() => setCopied(""), 2000); });
-  };
+  const [copied, setCopied] = useState(false);
   const handleShare = () => {
     if (navigator.share) {
       navigator.share({ text: shareMessage }).catch(() => {});
     } else {
-      copyText(shareMessage, "message");
+      navigator.clipboard.writeText(shareMessage).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
     }
   };
 
@@ -3953,14 +3976,10 @@ Referral code: ${code}`;
       <div style={{ background:BRAND_DARK, color:"white", margin:16, borderRadius:12, padding:"20px 20px", boxShadow:"none" }}>
         <div style={{ fontSize:14, opacity:0.8, marginBottom:4 }}>Your referral code</div>
         <div style={{ fontFamily:"'Sora',sans-serif", fontSize:36, fontWeight:700, letterSpacing:4, marginBottom:16 }}>{code}</div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          <button style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={handleShare}>
-            {copied === "message" ? "Copied!" : "Share invite message"}
-          </button>
-          <button style={{ background:"rgba(255,255,255,0.14)", color:"white", border:"1px solid rgba(255,255,255,0.25)", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={() => copyText(link, "link")}>
-            {copied === "link" ? "Copied!" : "Copy link only"}
-          </button>
-        </div>
+        <button style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={handleShare}>
+          {copied ? "Copied — message + link" : "Share invite"}
+        </button>
+        <div style={{ fontSize:11, opacity:0.65, marginTop:8 }}>Always sends the pitch below together with your link — never the bare link alone.</div>
       </div>
 
       {/* Preview of the message people will get — lets the user see and
