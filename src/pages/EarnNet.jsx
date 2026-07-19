@@ -3138,6 +3138,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
             const isTop = plan.level === 16;
             const gate  = canPurchasePlan(investments, plan.level);
             const open  = openLevel === plan.level;
+            const profitPerDay = plan.taskReward * plan.dailyTasks;
 
             return (
               <div key={plan.key} style={{ borderTop: idx === 0 ? "none" : `1px solid ${T.border}`, background:T.card }}>
@@ -3151,7 +3152,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
                       <span style={{ fontWeight:600, fontSize:13, color:T.text }}>{plan.name}</span>
                       {isTop && <span style={{ fontSize:9, fontWeight:700, color:GOLD, border:`1px solid ${GOLD}`, borderRadius:5, padding:"1px 6px" }}>TOP TIER</span>}
                     </div>
-                    <div style={{ fontSize:11, color:T.textSub, marginTop:1 }}>{plan.dailyTasks} tasks/day · 65% monthly</div>
+                    <div style={{ fontSize:11, color:T.textSub, marginTop:1 }}>{plan.dailyTasks} tasks/day · {fmt(profitPerDay)}/day</div>
                   </div>
                   <div style={{ textAlign:"right", flexShrink:0 }}>
                     <div style={{ fontWeight:700, fontSize:13, color:T.text }}>{fmt(plan.amount)}</div>
@@ -3161,9 +3162,10 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
 
                 {open && (
                   <div style={{ padding:"0 14px 14px" }}>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:12 }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr", gap:8, marginBottom:12 }}>
                       {[
                         ["Amount",       fmt(plan.amount)],
+                        ["Profit/day",   fmt(profitPerDay)],
                         ["Profit/30d",   fmt(plan.monthlyEarnings)],
                         ["Tasks/day",    String(plan.dailyTasks)],
                         ["Per task",     fmt(plan.taskReward)],
