@@ -1,16 +1,31 @@
 // src/pages/EarnNet.jsx
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Component } from "react";
 import {
   supabase, signUpWithPhone, signInWithPhone, signOut, getProfile,
   getActiveTasks, completeTask, getTransactions, requestWithdrawal,
   getUserWithdrawals, requestDeposit, getUserDeposits, activateAccount,
   getReferralTree, getSettings,
-  getUserInvestments, buyInvestmentPlan,
-  requestInvestmentPayment, matureUserInvestments,
-  reinvestFromBalance,
+  getUserInvestments, buyInvestmentPlan, enableAutoModeForPlan,
+  requestInvestmentPayment, processMonthlyVaultPayouts,
+  reinvestFromBalance, reinvestHeldProfit, getQualifyingReferralCount,
+  submitKyc, getKycStatus,
 } from "../lib/supabase";
 
 const fmt = (n) => "UGX " + Number(n || 0).toLocaleString();
+
+// Coerces any stored/typed phone number to the local 0XXXXXXXXX shape
+// LivePay expects, regardless of how it was saved (with/without +256,
+// spaces, dashes, etc). Deposit's phone field always starts blank and
+// gets typed fresh, which is why it "accidentally" always worked —
+// Invest/Withdraw/Activate pre-fill from the stored profile value, so
+// they need this same normalization applied to that stored value too.
+const normalizePhone = (raw) => {
+  const digits = (raw ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("256")) return "0" + digits.slice(3);
+  if (digits.startsWith("0")) return digits;
+  return digits;
+};
 
 const detectMethod = (phone) => {
   const n = (phone ?? "").replace(/\D/g, "");
@@ -25,33 +40,72 @@ const BG_DARK    = "#0F2D22";
 
 // ── Vault Plans — fixed 16-tier ladder ────────────────────────
 // Every plan fully determines its own amount, daily task count, and
-// per-task reward. All 16 tiers currently return a flat 30%/month,
-// delivered as taskReward × dailyTasks × 30 days (fixed 30-day term).
+// per-task reward. All 16 tiers return 65%/month — but principal is
+// no longer released with each month's profit. Principal stays locked
+// for a full year (12 monthly cycles); only that month's task-earned
+// profit pays out, and only once that cycle's referral condition is
+// met (see check_monthly_eligibility on the backend):
+//   cycle 1      : free, no condition
+//   cycle 2      : >= 1 referral who activated + has an active plan
+//   cycle 3      : >= 2 such referrals
+//   cycle 4..12  : >= 1 referral whose active plan amount >= 300,000
+// taskReward below is recalibrated so a full month of daily tasks
+// lands on 65% of the plan amount (see vault-plans-task-reward-65pct
+// migration) — dailyTasks is unchanged from the 30% era.
 // Five tiers (Starter, Sprout, Climber, Vanguard, Pioneer) were added
 // between the original amounts to smooth out the biggest jumps
 // (e.g. 45,000 → 180,000 was a 4x gap with nothing in between).
-// NOTE: the 30% rate below is a placeholder — per-tier rates will
-// replace this flat figure once the new rate model is calculated.
 const VAULT_PLANS = [
-  { level:1,  key:"beginner",   name:"Beginner",   icon:"🌱", amount:45000,      dailyTasks:1,  taskReward:450,   ratePercent:30 },
-  { level:2,  key:"starter",    name:"Starter",    icon:"🌿", amount:100000,     dailyTasks:2,  taskReward:500,   ratePercent:30 },
-  { level:3,  key:"seed",       name:"Seed",       icon:"🌱", amount:180000,     dailyTasks:3,  taskReward:600,   ratePercent:30 },
-  { level:4,  key:"sprout",     name:"Sprout",     icon:"🌾", amount:300000,     dailyTasks:4,  taskReward:750,   ratePercent:30 },
-  { level:5,  key:"rising",     name:"Rising",     icon:"🌅", amount:600000,     dailyTasks:6,  taskReward:1000,  ratePercent:30 },
-  { level:6,  key:"climber",    name:"Climber",    icon:"🧗", amount:900000,     dailyTasks:8,  taskReward:1125,  ratePercent:30 },
-  { level:7,  key:"nova",       name:"Nova",       icon:"💡", amount:1350000,    dailyTasks:11, taskReward:1227,  ratePercent:30 },
-  { level:8,  key:"vanguard",   name:"Vanguard",   icon:"🚀", amount:2700000,    dailyTasks:14, taskReward:1929,  ratePercent:30 },
-  { level:9,  key:"mastermind", name:"Mastermind", icon:"🧠", amount:4050000,    dailyTasks:18, taskReward:2250,  ratePercent:30 },
-  { level:10, key:"pioneer",    name:"Pioneer",    icon:"🛡️", amount:6000000,    dailyTasks:21, taskReward:2857,  ratePercent:30 },
-  { level:11, key:"titan",      name:"Titan",      icon:"💪", amount:8775000,    dailyTasks:25, taskReward:3510,  ratePercent:30 },
-  { level:12, key:"king",       name:"King",       icon:"👑", amount:16650000,   dailyTasks:34, taskReward:4897,  ratePercent:30 },
-  { level:13, key:"emperor",    name:"Emperor",    icon:"🦅", amount:29700000,   dailyTasks:44, taskReward:6750,  ratePercent:30 },
-  { level:14, key:"icon",       name:"Icon",       icon:"⭐", amount:48600000,   dailyTasks:55, taskReward:8836,  ratePercent:30 },
-  { level:15, key:"supreme",    name:"Supreme",    icon:"👑", amount:74250000,   dailyTasks:66, taskReward:11250, ratePercent:30 },
-  { level:16, key:"legendary",  name:"Legendary",  icon:"🏆", amount:110000000,  dailyTasks:75, taskReward:14667, ratePercent:30 },
-].map(p => ({ ...p, monthlyEarnings: p.taskReward * p.dailyTasks * 30, durationDays: 30 }));
+  { level:1,  key:"beginner",   name:"Beginner",   icon:"🌱", amount:45000,      dailyTasks:1,  taskReward:975,   ratePercent:65 },
+  { level:2,  key:"starter",    name:"Starter",    icon:"🌿", amount:100000,     dailyTasks:2,  taskReward:1083,  ratePercent:65 },
+  { level:3,  key:"seed",       name:"Seed",       icon:"🌱", amount:180000,     dailyTasks:3,  taskReward:1300,  ratePercent:65 },
+  { level:4,  key:"sprout",     name:"Sprout",     icon:"🌾", amount:300000,     dailyTasks:4,  taskReward:1625,  ratePercent:65 },
+  { level:5,  key:"rising",     name:"Rising",     icon:"🌅", amount:600000,     dailyTasks:6,  taskReward:2167,  ratePercent:65 },
+  { level:6,  key:"climber",    name:"Climber",    icon:"🧗", amount:900000,     dailyTasks:8,  taskReward:2438,  ratePercent:65 },
+  { level:7,  key:"nova",       name:"Nova",       icon:"💡", amount:1350000,    dailyTasks:11, taskReward:2659,  ratePercent:65 },
+  { level:8,  key:"vanguard",   name:"Vanguard",   icon:"🚀", amount:2700000,    dailyTasks:14, taskReward:4179,  ratePercent:65 },
+  { level:9,  key:"mastermind", name:"Mastermind", icon:"🧠", amount:4050000,    dailyTasks:18, taskReward:4875,  ratePercent:65 },
+  { level:10, key:"pioneer",    name:"Pioneer",    icon:"🛡️", amount:6000000,    dailyTasks:21, taskReward:6190,  ratePercent:65 },
+  { level:11, key:"titan",      name:"Titan",      icon:"💪", amount:8775000,    dailyTasks:25, taskReward:7605,  ratePercent:65 },
+  { level:12, key:"king",       name:"King",       icon:"👑", amount:16650000,   dailyTasks:34, taskReward:10610, ratePercent:65 },
+  { level:13, key:"emperor",    name:"Emperor",    icon:"🦅", amount:29700000,   dailyTasks:44, taskReward:14625, ratePercent:65 },
+  { level:14, key:"icon",       name:"Icon",       icon:"⭐", amount:48600000,   dailyTasks:55, taskReward:19145, ratePercent:65 },
+  { level:15, key:"supreme",    name:"Supreme",    icon:"👑", amount:74250000,   dailyTasks:66, taskReward:24375, ratePercent:65 },
+  { level:16, key:"legendary",  name:"Legendary",  icon:"🏆", amount:110000000,  dailyTasks:75, taskReward:31778, ratePercent:65 },
+].map(p => ({ ...p, monthlyEarnings: p.taskReward * p.dailyTasks * 30, durationDays: 30, totalCycles: 12 }));
+
+// Referral condition required to unlock a given cycle's payout — mirrors
+// check_monthly_eligibility() on the backend exactly, purely for display.
+function referralRequirementForCycle(cycleNumber) {
+  if (cycleNumber <= 1) return null;
+  if (cycleNumber === 2) return { count: 1, minAmount: 0 };
+  if (cycleNumber === 3) return { count: 2, minAmount: 0 };
+  return { count: 1, minAmount: 300000 };
+}
 
 const planByLevel = (level) => VAULT_PLANS.find(p => p.level === level);
+
+// Plans STACK: a user can hold several active plans of different tiers at
+// once, and each one independently contributes its own daily task quota,
+// its own task_reward, and its own 30-day maturity — see getTaskEarningInfo()
+// below, which already sums across every active investment. The only
+// restriction is per-tier: you can't hold two active plans of the exact
+// same level at once (e.g. buy Beginner again while a Beginner is still
+// active) — that tier must mature first. Any other tier — higher or lower —
+// can be bought at any time alongside it. This is a UI-level guard for a
+// responsive experience; the same rule must also be enforced inside the
+// buy_vault_plan RPC since a client check alone can be bypassed.
+function canPurchasePlan(investments, targetLevel) {
+  const active = (investments ?? []).filter(i => i.status === "active");
+  const sameTier = active.find(i => i.plan_level === targetLevel);
+  if (sameTier) {
+    return {
+      allowed: false,
+      reason: `You already have an active ${sameTier.plan_name} plan — it must mature before buying this tier again.`,
+    };
+  }
+  return { allowed: true };
+}
 
 // Visual badge styling bucketed by level range — colour/gradient only.
 // Amount, tasks, reward, and rate all come from the plan itself, not from here.
@@ -63,7 +117,8 @@ const TIER_BANDS = [
 ];
 const tierStyle = (level) => (TIER_BANDS.find(b => level >= b.min) ?? TIER_BANDS[TIER_BANDS.length - 1]);
 
-// Fixed 30-day term for every vault plan — no variable lockup anymore.
+// Each monthly cycle is 30 days; principal stays locked for all 12
+// cycles (~1 year) — only that cycle's profit is up for payout each month.
 const fmtDuration = () => "30 days";
 
 // Given a user's investments, find the highest-level ACTIVE plan.
@@ -88,6 +143,56 @@ function getActiveTier(investments) {
     ...style,
   };
 }
+
+// Given a user's investments, find the ACTIVE investment that will
+// absorb the next task completion, mirroring complete_task()'s
+// server-side rule exactly: oldest active plan with quota left
+// today gets filled first. Each plan pays its own task_reward, so
+// running multiple plans at once means earning from each of them
+// as their daily allowances get worked through.
+function getTaskEarningInfo(investments) {
+  const active = (investments ?? []).filter(i => i.status === "active");
+  if (active.length === 0) return null;
+  const todayStr = new Date().toDateString();
+  const withToday = active.map(i => ({
+    ...i,
+    tasksToday: (i.tasks_today_date && new Date(i.tasks_today_date).toDateString() === todayStr) ? (i.tasks_today ?? 0) : 0,
+  }));
+  const totalDailyTasks     = withToday.reduce((s, i) => s + (i.daily_tasks ?? 0), 0);
+  const tasksRemainingToday = withToday.reduce((s, i) => s + Math.max(0, (i.daily_tasks ?? 0) - i.tasksToday), 0);
+  const next = withToday
+    .filter(i => i.tasksToday < i.daily_tasks)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0];
+  return {
+    totalDailyTasks,
+    tasksRemainingToday,
+    nextReward: next?.task_reward ?? null,
+    plansCount: active.length,
+  };
+}
+
+// Shows the reward the NEXT task completion will actually pay — once,
+// clearly labeled — instead of stamping that same number onto every task
+// card. Which plan absorbs a completion (and therefore what it pays) is
+// decided server-side per completion, not per task, so every task in the
+// list genuinely does pay the same amount right now; repeating that
+// number on each card just made it look like a bug. This banner says it
+// once and explains why it updates as the day's quota gets used up.
+function NextRewardBanner({ earningInfo, dark }) {
+  if (!earningInfo) return null;
+  return (
+    <div style={{ margin:"12px 16px 0", background: dark ? "#142e20" : "#E1F5EE", borderRadius:12, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div style={{ fontSize:12, color:BRAND_DARK }}>
+        <strong>{earningInfo.tasksRemainingToday} of {earningInfo.totalDailyTasks} tasks</strong> left today
+        {earningInfo.nextReward != null && <> · next pays <strong>{fmt(earningInfo.nextReward)}</strong></>}
+      </div>
+      <span style={{ background:BRAND, color:"white", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>
+        {earningInfo.plansCount} plan{earningInfo.plansCount !== 1 ? "s" : ""} active
+      </span>
+    </div>
+  );
+}
+
 
 // ── Dark mode context ──────────────────────────────────────────
 function useDarkMode() {
@@ -174,7 +279,49 @@ function theme(dark) {
   };
 }
 
-export default function EarnNet() {
+// ── Error boundary ────────────────────────────────────────────
+// There was no error boundary anywhere in this app. In React, any
+// uncaught error thrown during render/commit unmounts the ENTIRE
+// tree with nothing left on screen — that's what a "blank page"
+// almost always is. This is especially likely to surface right
+// after returning from a backgrounded tab (e.g. after opening
+// YouTube for a subscribe task): browsers heavily throttle timers
+// while backgrounded, then fire several queued ticks back-to-back
+// on return, which can expose timing/ordering bugs that don't show
+// up in normal use. This boundary won't fix an underlying bug by
+// itself, but it stops a crash from taking down the whole app, and
+// logs the real error to the console so it's actually diagnosable
+// instead of just showing white.
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    console.error("EarnNet crashed:", error, info?.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center",
+          justifyContent:"center", padding:24, fontFamily:"'DM Sans',sans-serif", textAlign:"center" }}>
+          <div style={{ fontSize:48, marginBottom:12 }}>⚠️</div>
+          <div style={{ fontWeight:700, fontSize:18, marginBottom:8 }}>Something went wrong</div>
+          <div style={{ fontSize:13, color:"#666", marginBottom:20, maxWidth:280 }}>
+            The app hit an unexpected error. Tap below to reload — your progress is saved.
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ background:"#1D9E75", color:"white", border:"none", borderRadius:10, padding:"12px 28px", fontSize:14, fontWeight:700, cursor:"pointer" }}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function EarnNetApp() {
   const [session, setSession]         = useState(null);
   const [profile, setProfile]         = useState(null);
   const [settings, setSettings]       = useState({});
@@ -205,10 +352,29 @@ export default function EarnNet() {
     finally { setLoading(false); }
   }
 
+  // Silent refresh — used after in-app actions (task complete, deposit,
+  // withdraw, invest, etc). Deliberately does NOT touch `loading`: doing
+  // so used to unmount the whole MainApp tree (swapping in <Splash/>)
+  // on every single action, which reset MainApp's local UI state each
+  // time — closing the notifications dropdown, resetting the wallet's
+  // transaction-history selector back to "transactions", etc. This just
+  // updates the profile object in place instead.
+  async function refreshProfileSilently(uid) {
+    try { setProfile(await getProfile(uid)); } catch {}
+  }
+
   if (loading)      return <Splash dark={dark} />;
   if (showLanding)  return <LandingPage onGetStarted={() => setShowLanding(false)} settings={settings} dark={dark} toggleDark={toggleDark} />;
   if (!session)     return <AuthFlow settings={settings} dark={dark} toggleDark={toggleDark} />;
-  return <MainApp session={session} profile={profile} settings={settings} refreshProfile={() => loadProfile(session.user.id)} dark={dark} toggleDark={toggleDark} />;
+  return <MainApp session={session} profile={profile} settings={settings} refreshProfile={() => refreshProfileSilently(session.user.id)} dark={dark} toggleDark={toggleDark} />;
+}
+
+export default function EarnNet() {
+  return (
+    <ErrorBoundary>
+      <EarnNetApp />
+    </ErrorBoundary>
+  );
 }
 
 // ── Splash ─────────────────────────────────────────────────────
@@ -229,7 +395,6 @@ const TICKER_EVENTS = [
   { icon:"👥", msg:"James referred a friend and earned UGX 3,000 commission" },
   { icon:"🌱", msg:"Sandra activated a 3-month Growth plan — 6% return" },
   { icon:"💸", msg:"Robert from Gulu withdrew UGX 18,000 to MTN MoMo" },
-  { icon:"🔥", msg:"Patricia hit a 7-day streak and earned a bonus!" },
   { icon:"✅", msg:"Patrick watched a video ad and earned UGX 400" },
   { icon:"💎", msg:"Annet reached Gold VIP tier — bigger task rewards unlocked" },
   { icon:"💸", msg:"Emmanuel withdrew UGX 50,000 to Airtel Money" },
@@ -270,7 +435,6 @@ function LandingPage({ onGetStarted, settings, dark, toggleDark }) {
     { icon: "📋", title: "Complete tasks",    desc: "Follow social pages, fill surveys, install apps — get paid instantly per task." },
     { icon: "👥", title: "Refer & earn",       desc: "Earn 10% + 5% commission across 2 levels when your referrals buy a growth plan." },
     { icon: "💸", title: "Withdraw anytime",   desc: "Cash out to MTN or Airtel Money. Processed within 24 hours." },
-    { icon: "🔥", title: "Daily streak bonus", desc: "Log in 7 days in a row and earn a bonus on top of your task income." },
   ];
   const steps = [
     { n: "1", title: "Sign up free",          desc: "Create your account in under a minute." },
@@ -508,20 +672,50 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [depositModal, setDepositModal]   = useState(false);
   const [activateModal, setActivateModal] = useState(false);
   const [investModal, setInvestModal]     = useState(null); // plan object or null
-  const [reinvestModal, setReinvestModal] = useState(null); // matured investment or null
+  const [reinvestModal, setReinvestModal] = useState(null); // completed (12-cycle) investment or null
+  const [kycModal, setKycModal]           = useState(false);
+  const [kycSubmission, setKycSubmission] = useState(null); // latest kyc_submissions row, or null
   const [selectedTask, setSelectedTask]   = useState(null);
   const [notifOpen, setNotifOpen]         = useState(false);
+  const [confirmClearNotifs, setConfirmClearNotifs] = useState(false);
   const uid = session.user.id;
   const T   = theme(dark);
+  const readNotifKey = `earnnet_read_notifs_${uid}`;
+  const [readNotifIds, setReadNotifIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(readNotifKey) ?? "[]")); } catch { return new Set(); }
+  });
+  const notifClearedKey = `earnnet_notifs_cleared_${uid}`;
+  const [notifClearedAt, setNotifClearedAt] = useState(() => {
+    try { return parseInt(localStorage.getItem(notifClearedKey) ?? "0", 10) || 0; } catch { return 0; }
+  });
 
-  // Derive notifications from transactions
-  const notifications = txns.slice(0, 5).map(tx => ({
+  // Derive notifications from transactions — hide anything at/before the
+  // last "Clear all" cutoff (a local dismissal, not a deletion of the
+  // underlying transaction — that record still lives in Wallet history).
+  const notifications = txns
+    .filter(tx => new Date(tx.created_at).getTime() > notifClearedAt)
+    .slice(0, 5)
+    .map(tx => ({
     id: tx.id,
     icon: tx.type === "task" ? "✅" : tx.type === "referral" ? "👥" : tx.type === "bonus" ? "🎁" : tx.type === "streak" ? "🔥" : "💸",
     title: tx.description ?? tx.type,
     amount: tx.amount,
     time: new Date(tx.created_at).toLocaleDateString(),
+    read: readNotifIds.has(tx.id),
   }));
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const clearAllNotifs = () => {
+    const now = Date.now();
+    setNotifClearedAt(now);
+    try { localStorage.setItem(notifClearedKey, String(now)); } catch {}
+  };
+
+  const markAllNotifsRead = () => {
+    const ids = new Set([...readNotifIds, ...notifications.map(n => n.id)]);
+    setReadNotifIds(ids);
+    try { localStorage.setItem(readNotifKey, JSON.stringify([...ids])); } catch {}
+  };
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -530,6 +724,58 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
 
   const refreshProfileRef = useRef(refreshProfile);
   useEffect(() => { refreshProfileRef.current = refreshProfile; }, [refreshProfile]);
+
+  // ── Pending-investment recovery ──────────────────────────────
+  // Buying a plan via mobile money is a two-step process: LivePay credits
+  // the raw payment into profile.balance, then the app (while InvestModal
+  // is open and polling) calls buyInvestmentPlan() to actually deduct it
+  // and activate the plan. If the phone locks, the user switches apps to
+  // check their confirmation SMS, or the tab/app closes before that
+  // polling finishes, the payment can land with nobody left to finish the
+  // purchase — the user is charged but gets no plan.
+  //
+  // InvestModal writes a small "payment in flight" record to localStorage
+  // right after the STK push is sent. This effect re-checks that record
+  // on every app mount, window focus, and tab-visibility change — not
+  // just while the modal happens to still be mounted — so a payment that
+  // lands after the app was backgrounded/closed still gets completed.
+  const recoverPendingInvestment = useCallback(async () => {
+    const key = `earnnet_pending_invest_${uid}`;
+    let intent;
+    try { intent = JSON.parse(localStorage.getItem(key) ?? "null"); } catch { intent = null; }
+    if (!intent) return;
+
+    // LivePay prompts resolve in minutes, not hours — drop anything this
+    // old rather than risk buying a plan off an unrelated later balance
+    // change (a task payout, another deposit, etc).
+    if (Date.now() - intent.requestedAt > 3 * 60 * 60 * 1000) {
+      localStorage.removeItem(key);
+      return;
+    }
+
+    try {
+      const fresh = await getProfile(uid);
+      if (!fresh || fresh.balance <= intent.startedBalance) return; // payment hasn't landed yet — check again later
+      await buyInvestmentPlan(uid, intent.level, intent.autoMode ? "auto" : "manual");
+      localStorage.removeItem(key);
+      await refreshProfileRef.current();
+      showToast(`✅ Your plan purchase completed — your payment had landed after the app closed.`, "success");
+    } catch {
+      // Leave the record in place and retry on the next check rather than
+      // silently dropping a payment we can't yet account for.
+    }
+  }, [uid]);
+
+  useEffect(() => {
+    recoverPendingInvestment();
+    const onVisible = () => { if (document.visibilityState === "visible") recoverPendingInvestment(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [recoverPendingInvestment]);
 
   const loadTasks = useCallback(async () => {
     setTaskLoading(true);
@@ -548,30 +794,72 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
 
   const loadInvestments = useCallback(async () => {
     try {
+      const processed = await processMonthlyVaultPayouts(uid);
+      if (processed > 0) await refreshProfileRef.current();
       const invs = await getUserInvestments(uid);
-      const matured = await matureUserInvestments(uid);
-      if (matured > 0) await refreshProfileRef.current();
       setInvestments(invs);
+    } catch {}
+  }, [uid]);
+
+  const loadKyc = useCallback(async () => {
+    try {
+      const k = await getKycStatus(uid);
+      setKycSubmission(k);
+      // One-time celebratory toast the first time we see an approved
+      // submission — flagged per-submission id so it doesn't repeat
+      // on every reload.
+      if (k?.status === "approved") {
+        const seenKey = `earnnet_kyc_seen_${k.id}`;
+        if (!localStorage.getItem(seenKey)) {
+          localStorage.setItem(seenKey, "1");
+          showToast("🎉 Your ID is verified — you can now withdraw!");
+        }
+      }
     } catch {}
   }, [uid]);
 
   // Only re-run when uid changes, not on every callback recreation
   useEffect(() => {
-    loadTasks(); loadWallet(); loadReferrals(); loadInvestments();
+    loadTasks(); loadWallet(); loadReferrals(); loadInvestments(); loadKyc();
   }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist which task the user is mid-task on, so a mobile tab
+  // reload (backgrounding a task that opened YouTube/TikTok/a site)
+  // can reopen the same task screen instead of silently dropping
+  // back to the tab list and losing progress.
+  useEffect(() => {
+    try {
+      if (selectedTask) localStorage.setItem("earnnet_selected_task_id", selectedTask.id);
+      else localStorage.removeItem("earnnet_selected_task_id");
+    } catch {}
+  }, [selectedTask]);
+
+  // Once tasks have loaded after a fresh mount, check for a pending
+  // task id from before the reload and reopen it automatically.
+  useEffect(() => {
+    if (selectedTask || tasks.length === 0) return;
+    try {
+      const pendingId = localStorage.getItem("earnnet_selected_task_id");
+      if (!pendingId) return;
+      const found = tasks.find(task => task.id === pendingId);
+      if (found) setSelectedTask(found);
+      else localStorage.removeItem("earnnet_selected_task_id"); // task no longer active/available
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
 
   const handleCompleteTask = async (taskId, proofBase64) => {
     if (!profile?.activated) { setActivateModal(true); return; }
     try {
-      await completeTask(uid, taskId, proofBase64);
-      showToast("Task completed! Earnings locked to your plan 🔒");
+      const reward = await completeTask(uid, taskId, proofBase64);
+      showToast(`+${fmt(reward)} locked to your plan 🔒`);
       await Promise.all([loadTasks(), refreshProfile(), loadWallet(), loadInvestments()]);
     } catch (e) { showToast(e.message ?? "Could not complete task", "error"); }
   };
 
-  const handleWithdraw = async ({ amount, method, phone }) => {
+  const handleWithdraw = async ({ amount, method, phone, bucket }) => {
     try {
-      await requestWithdrawal(uid, parseInt(amount), method, phone);
+      await requestWithdrawal(uid, parseInt(amount), method, phone, bucket);
       showToast("Withdrawal request submitted ✓");
       setWithdrawModal(false);
       await Promise.all([refreshProfile(), loadWallet()]);
@@ -586,6 +874,14 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const handleActivate = async ({ method, phone }) => {
     // Just call the API — the modal manages its own waiting/success screens
     await activateAccount(uid, method, phone);
+  };
+
+  const handleKycSubmit = async ({ idType, front, back }) => {
+    await submitKyc(uid, idType, front, back);
+    await Promise.all([loadKyc(), refreshProfile()]);
+    setKycModal(false);
+    setWithdrawModal(false); // they'll reopen it once approved
+    showToast("ID submitted — we'll review it shortly ✓");
   };
 
   const tabs = [
@@ -632,21 +928,39 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
           <div style={{ position:"relative" }}>
             <button onClick={() => setNotifOpen(o => !o)} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, width:32, height:32, cursor:"pointer", fontSize:16, color:T.text, display:"flex", alignItems:"center", justifyContent:"center", position:"relative" }}>
               🔔
-              {notifications.length > 0 && (
+              {unreadCount > 0 && (
                 <span style={{ position:"absolute", top:-4, right:-4, background:"#E24B4A", color:"white", fontSize:9, padding:"1px 5px", borderRadius:10, fontWeight:700 }}>
-                  {Math.min(notifications.length, 9)}
+                  {Math.min(unreadCount, 9)}
                 </span>
               )}
             </button>
             {notifOpen && (
               <div style={{ position:"absolute", right:0, top:"calc(100% + 8px)", width:280, background:T.notifBg, border:`0.5px solid ${T.border}`, borderRadius:16, boxShadow:"0 8px 24px rgba(0,0,0,0.15)", zIndex:200, overflow:"hidden" }}>
-                <div style={{ padding:"12px 14px 10px", borderBottom:`0.5px solid ${T.border}`, fontWeight:700, fontSize:13, color:T.text }}>Recent activity</div>
+                <div style={{ padding:"12px 14px 10px", borderBottom:`0.5px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontWeight:700, fontSize:13, color:T.text }}>Recent activity</span>
+                  <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                    <button onClick={markAllNotifsRead} disabled={unreadCount === 0}
+                      style={{ background:"none", border:"none", color: unreadCount === 0 ? T.textSub : BRAND, fontSize:11, fontWeight:600, cursor: unreadCount === 0 ? "default" : "pointer", padding:0 }}>
+                      Mark all as read
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirmClearNotifs) { clearAllNotifs(); setConfirmClearNotifs(false); }
+                        else { setConfirmClearNotifs(true); setTimeout(() => setConfirmClearNotifs(false), 3000); }
+                      }}
+                      disabled={notifications.length === 0}
+                      style={{ background:"none", border:"none", color: notifications.length === 0 ? T.textSub : "#E24B4A", fontSize:11, fontWeight:600, cursor: notifications.length === 0 ? "default" : "pointer", padding:0 }}>
+                      {confirmClearNotifs ? "Tap to confirm" : "Clear all"}
+                    </button>
+                  </div>
+                </div>
                 {notifications.length === 0
                   ? <div style={{ padding:20, textAlign:"center", color:T.textSub, fontSize:13 }}>No activity yet</div>
                   : notifications.map(n => (
-                      <div key={n.id} style={{ padding:"10px 14px", borderBottom:`0.5px solid ${T.border}`, background:T.notifBg, cursor:"default" }}>
+                      <div key={n.id} style={{ padding:"10px 14px", borderBottom:`0.5px solid ${T.border}`, background:T.notifBg, cursor:"default", opacity: n.read ? 0.6 : 1 }}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                            {!n.read && <span style={{ width:6, height:6, borderRadius:"50%", background:BRAND, flexShrink:0 }} />}
                             <span style={{ fontSize:18 }}>{n.icon}</span>
                             <div>
                               <div style={{ fontSize:12, fontWeight:600, color:T.text }}>{n.title}</div>
@@ -674,29 +988,38 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       </div>
 
       <main style={{ flex:1, overflowY:"auto", paddingTop:4 }}>
-        {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} dark={dark} />}
+        {tab === "home"     && <HomeTab     profile={profile} tasks={tasks} settings={settings} kycSubmission={kycSubmission} onStartKyc={() => setKycModal(true)} onGoTasks={() => setTab("tasks")} onGoGrow={() => setTab("grow")} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} onActivate={() => setActivateModal(true)} onSelectTask={setSelectedTask} txns={txns} investments={investments} referrals={referrals} dark={dark} />}
         {tab === "tasks"    && <TasksTab    tasks={tasks} loading={taskLoading} onComplete={handleCompleteTask} onRefresh={loadTasks} onSelectTask={setSelectedTask} investments={investments} onGoGrow={() => setTab("grow")} dark={dark} />}
-        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={VAULT_PLANS} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onRefresh={loadInvestments} dark={dark} />}
-        {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
+        {tab === "grow"     && <GrowTab     profile={profile} investments={investments} plans={VAULT_PLANS} onBuyPlan={setInvestModal} onReinvest={setReinvestModal} onRefresh={async () => { await Promise.all([loadInvestments(), refreshProfile()]); }} dark={dark} />}
+        {tab === "wallet"   && <WalletTab   profile={profile} txns={txns} withdrawals={withdrawals} deposits={deposits} settings={settings} onWithdraw={() => setWithdrawModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} userId={uid} />}
         {tab === "referral" && <ReferralTab profile={profile} referrals={referrals} settings={settings} dark={dark} />}
-        {tab === "profile"  && <ProfileTab  profile={profile} investments={investments} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
+        {tab === "profile"  && <ProfileTab  profile={profile} investments={investments} kycSubmission={kycSubmission} onStartKyc={() => setKycModal(true)} onSignOut={signOut} onActivate={() => setActivateModal(true)} onDeposit={() => setDepositModal(true)} dark={dark} />}
       </main>
 
       {/* Bottom nav */}
       <nav style={{ display:"flex", background:T.navBg, borderTop:`0.5px solid ${T.border}`, position:"sticky", bottom:0, zIndex:50 }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"10px 0", background:"none", border:"none", color: tab === t.id ? BRAND : T.textSub, cursor:"pointer", transition:"color 0.15s" }}>
-            <span style={{ fontSize:22 }}>{t.icon}</span>
-            <span style={{ fontSize:10, marginTop:2 }}>{t.label}</span>
-          </button>
-        ))}
+        {tabs.map(t => {
+          const active = tab === t.id;
+          return (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ position:"relative", flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 0 9px", background:"none", border:"none", color: active ? BRAND : T.textSub, cursor:"pointer", transition:"color 0.15s" }}>
+              {active && <span style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:24, height:3, borderRadius:"0 0 3px 3px", background:BRAND }} />}
+              <span style={{
+                fontSize:20, lineHeight:1, width:36, height:26, display:"flex", alignItems:"center", justifyContent:"center",
+                borderRadius:10, background: active ? (dark ? "rgba(29,158,117,0.22)" : "#E1F5EE") : "transparent",
+                transition:"background 0.15s"
+              }}>{t.icon}</span>
+              <span style={{ fontSize:10, marginTop:1, fontWeight: active ? 700 : 500 }}>{t.label}</span>
+            </button>
+          );
+        })}
       </nav>
 
-      {withdrawModal && <WithdrawModal profile={profile} settings={settings} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
+      {withdrawModal && <WithdrawModal profile={profile} settings={settings} investments={investments} userId={uid} kycSubmission={kycSubmission} onStartKyc={() => { setWithdrawModal(false); setKycModal(true); }} onClose={() => setWithdrawModal(false)} onSubmit={handleWithdraw} dark={dark} />}
       {depositModal  && <DepositModal  settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} onClose={() => setDepositModal(false)}  onSubmit={handleDeposit} refreshProfile={refreshProfile} dark={dark} />}
       {activateModal && <ActivateModal settings={settings} userId={uid} currentBalance={profile?.balance ?? 0} profile={profile} onClose={() => setActivateModal(false)} onSubmit={handleActivate} refreshProfile={refreshProfile} dark={dark} />}
       {investModal   && <InvestModal   plan={investModal} profile={profile} userId={uid} investments={investments} onClose={() => setInvestModal(null)} onSuccess={async () => { setInvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Investment activated! Watch your profits grow 🌱"); }} dark={dark} />}
       {reinvestModal && <ReinvestModal plan={reinvestModal} profile={profile} userId={uid} plans={VAULT_PLANS} onClose={() => setReinvestModal(null)} onSuccess={async () => { setReinvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Reinvested! Your new plan is growing 🌱"); }} dark={dark} />}
+      {kycModal      && <KycModal      kycSubmission={kycSubmission} onClose={() => setKycModal(false)} onSubmit={handleKycSubmit} dark={dark} />}
       {toast && <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background: toast.type === "error" ? "#E24B4A" : BRAND, color:"white", padding:"12px 24px", borderRadius:14, fontSize:13, fontWeight:500, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.25)", animation:"slideUp 0.3s ease", whiteSpace:"nowrap" }}>{toast.msg}</div>}
 
       {/* Close notif on outside click */}
@@ -717,8 +1040,8 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
 
 // ── Activate Modal ─────────────────────────────────────────────
 function ActivateModal({ settings, userId, currentBalance, profile, onClose, onSubmit, refreshProfile, dark }) {
-  const [phone, setPhone]     = useState(profile?.phone ?? "");
-  const [method, setMethod]   = useState(detectMethod(profile?.phone));
+  const [phone, setPhone]     = useState(normalizePhone(profile?.phone));
+  const [method, setMethod]   = useState(detectMethod(normalizePhone(profile?.phone)));
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
   const [step, setStep]       = useState("form"); // "form" | "waiting" | "success"
@@ -795,7 +1118,7 @@ function ActivateModal({ settings, userId, currentBalance, profile, onClose, onS
           A one-time activation fee of <strong style={{ color:T.text }}>{fmt(fee)}</strong> unlocks all task earning features and withdrawals.
         </p>
         <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px 16px", marginBottom:18 }}>
-          {["✅ Complete all tasks and earn","💸 Request withdrawals","👥 Earn referral commissions","🔥 Streak bonuses"].map(b => (
+          {["✅ Complete all tasks and earn","💸 Request withdrawals","👥 Earn referral commissions"].map(b => (
             <div key={b} style={{ fontSize:13, color:BRAND_DARK, marginBottom:5 }}>{b}</div>
           ))}
         </div>
@@ -821,8 +1144,8 @@ function ActivateModal({ settings, userId, currentBalance, profile, onClose, onS
 // ── Deposit Modal ──────────────────────────────────────────────
 function DepositModal({ settings, userId, currentBalance, profile, onClose, onSubmit, refreshProfile, dark }) {
   const [amount, setAmount]   = useState("");
-  const [phone, setPhone]     = useState(profile?.phone ?? "");
-  const [method, setMethod]   = useState(detectMethod(profile?.phone));
+  const [phone, setPhone]     = useState(normalizePhone(profile?.phone));
+  const [method, setMethod]   = useState(detectMethod(normalizePhone(profile?.phone)));
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
   const [step, setStep]       = useState("form"); // "form" | "waiting" | "success"
@@ -967,14 +1290,55 @@ function DepositModal({ settings, userId, currentBalance, profile, onClose, onSu
   );
 }
 
+// ── Persisted task-in-progress helpers ──────────────────────────
+// Mobile browsers routinely discard a backgrounded tab (e.g. after
+// tapping a task link that opens YouTube/TikTok/a website) and just
+// reload it fresh when the user returns — wiping any useState timer.
+// We persist the bare minimum (task id + real start time) to
+// localStorage the moment a task starts, so on reload we can work
+// out from the wall clock how much time has actually passed and
+// resume — or immediately credit — instead of losing progress.
+const ACTIVE_TASK_TIMER_KEY = "earnnet_active_task_timer";
+
+function readActiveTaskTimer(taskId) {
+  try {
+    const raw = localStorage.getItem(ACTIVE_TASK_TIMER_KEY);
+    if (!raw) return null;
+    const stored = JSON.parse(raw);
+    if (stored.taskId !== taskId) return null;
+    return stored; // { taskId, startedAt, duration }
+  } catch { return null; }
+}
+function writeActiveTaskTimer(taskId, duration) {
+  try {
+    localStorage.setItem(ACTIVE_TASK_TIMER_KEY, JSON.stringify({ taskId, startedAt: Date.now(), duration }));
+  } catch {}
+}
+function clearActiveTaskTimer() {
+  try { localStorage.removeItem(ACTIVE_TASK_TIMER_KEY); } catch {}
+}
+// How many seconds are left, based on real elapsed time — never on a
+// JS interval that could've been suspended along with the tab.
+function elapsedSecondsSince(startedAt) {
+  return Math.floor((Date.now() - startedAt) / 1000);
+}
+
 // ── Countdown Timer Hook ───────────────────────────────────────
 function useCountdown(seconds, onComplete) {
   const [timeLeft, setTimeLeft] = useState(seconds);
   const [running, setRunning]   = useState(false);
   const [finished, setFinished] = useState(false);
   const ref = useRef(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
-  const start = () => { setTimeLeft(seconds); setRunning(true); setFinished(false); };
+  // Pass a lower starting point to resume a timer that's already
+  // partway through (e.g. restored from localStorage after reload).
+  const start = (resumeTimeLeft) => {
+    setTimeLeft(resumeTimeLeft ?? seconds);
+    setRunning(true);
+    setFinished(false);
+  };
 
   useEffect(() => {
     if (!running) return;
@@ -984,7 +1348,6 @@ function useCountdown(seconds, onComplete) {
           clearInterval(ref.current);
           setRunning(false);
           setFinished(true);
-          onComplete();
           return 0;
         }
         return t - 1;
@@ -993,8 +1356,48 @@ function useCountdown(seconds, onComplete) {
     return () => clearInterval(ref.current);
   }, [running]);
 
+  // Fire the (async) completion callback from an effect, never from
+  // inside the setTimeLeft updater above — updater functions must
+  // stay pure/synchronous. This also means it only ever fires once
+  // per `start()`, even if the tab was backgrounded and the browser
+  // fires several queued interval ticks back-to-back on return.
+  const firedRef = useRef(false);
+  useEffect(() => {
+    if (!finished) { firedRef.current = false; return; }
+    if (firedRef.current) return;
+    firedRef.current = true;
+    onCompleteRef.current?.();
+  }, [finished]);
+
   const fmt = (s) => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   return { timeLeft, running, finished, start, display: fmt(timeLeft) };
+}
+
+// ── YouTube IFrame Player API loader ────────────────────────────
+// Loads https://www.youtube.com/iframe_api once and shares the promise
+// across every mount, instead of talking to the iframe via hand-rolled
+// postMessage calls. This is the officially supported way to get
+// reliable onReady / onStateChange callbacks from an embedded player —
+// the raw postMessage protocol used previously isn't documented or
+// guaranteed by YouTube, which is why state-change events could silently
+// never arrive even while the video was visibly playing.
+let ytApiPromise = null;
+function loadYouTubeIframeAPI() {
+  if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
+  if (ytApiPromise) return ytApiPromise;
+  ytApiPromise = new Promise((resolve) => {
+    const prevCallback = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prevCallback === "function") prevCallback();
+      resolve(window.YT);
+    };
+    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(tag);
+    }
+  });
+  return ytApiPromise;
 }
 
 // ── YouTube Watch Task ─────────────────────────────────────────
@@ -1005,12 +1408,12 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   const [phase, setPhase]               = useState("ready");
   const [timerRunning, setTimerRunning] = useState(false);
   const [elapsed, setElapsed]           = useState(0);
-  const [vidState, setVidState]         = useState("idle");
 
-  const doneRef     = useRef(false);
-  const intervalRef = useRef(null);
-  const lastTickRef = useRef(null);
-  const iframeRef   = useRef(null);
+  const doneRef      = useRef(false);
+  const intervalRef  = useRef(null);
+  const lastTickRef  = useRef(null);
+  const playerElRef  = useRef(null); // div the YT.Player attaches to
+  const playerRef    = useRef(null); // the YT.Player instance itself
 
   const fmtTime = (s) => {
     const safe = Math.max(0, Math.round(s));
@@ -1024,43 +1427,43 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
   };
   const ytId = getYTId(t.link);
 
-  // Send a command to the YT iframe player
-  const ytCmd = (func) => {
-    try {
-      iframeRef.current?.contentWindow?.postMessage(
-        JSON.stringify({ event: "command", func, args: [] }),
-        "https://www.youtube.com"
-      );
-    } catch {}
-  };
-
-  // Once iframe loads, send playVideo — retry at 500ms and 1500ms
-  // for slow devices. The button tap (handleStart) was the required
-  // user gesture so autoplay is unlocked on mobile.
-  const handleIframeLoad = () => {
-    ytCmd("playVideo");
-    setTimeout(() => ytCmd("playVideo"), 500);
-    setTimeout(() => ytCmd("playVideo"), 1500);
-  };
-
-  // YouTube state events — pause timer when user pauses, resume when they play
+  // Build a real YT.Player once we enter "watching" and the container
+  // div has mounted. Using the official IFrame Player API (instead of
+  // hand-rolled postMessage calls) means onReady/onStateChange are
+  // callbacks YouTube actually guarantees — no more handshake that can
+  // silently fail while the video plays on with the timer never told.
   useEffect(() => {
-    if (phase !== "watching") return;
-    const handler = (e) => {
-      if (!e.data) return;
-      try {
-        const msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
-        if (msg.event === "onStateChange") {
-          const s = Number(msg.info);
-          if (s === 1 || s === 3) { setVidState("playing");  setTimerRunning(true);  }
-          else if (s === 2)       { setVidState("paused");   setTimerRunning(false); }
-          else if (s === 0)       { setVidState("ended");    setTimerRunning(false); }
-        }
-      } catch {}
+    if (phase !== "watching" || !ytId) return;
+    let cancelled = false;
+
+    loadYouTubeIframeAPI().then((YT) => {
+      if (cancelled || !playerElRef.current) return;
+      playerRef.current = new YT.Player(playerElRef.current, {
+        videoId: ytId,
+        playerVars: {
+          autoplay: 1,
+          controls: 1,
+          playsinline: 1,
+          rel: 0,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: (e) => { try { e.target.playVideo(); } catch {} },
+          onStateChange: (e) => {
+            const s = e.data; // YT.PlayerState: -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering
+            if (s === 1 || s === 3)      setTimerRunning(true);
+            else if (s === 2 || s === 0) setTimerRunning(false);
+          },
+        },
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      try { playerRef.current?.destroy?.(); } catch {}
+      playerRef.current = null;
     };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [phase]);
+  }, [phase, ytId]);
 
   // Timer — performance.now() deltas every 250ms
   useEffect(() => {
@@ -1076,7 +1479,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         if (next >= duration && !doneRef.current) {
           doneRef.current = true;
           clearInterval(intervalRef.current);
-          ytCmd("stopVideo"); // stop the video when time is up
+          try { playerRef.current?.stopVideo(); } catch {} // stop the video when time is up
           onComplete(t.id).then(() => setPhase("done")).catch(() => {});
           return duration;
         }
@@ -1114,15 +1517,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         {ytId ? (
           <div style={{ borderRadius:16, overflow:"hidden", marginBottom:14, background:"#000" }}>
             {phase === "watching" ? (
-              <iframe
-                ref={iframeRef}
-                width="100%"
-                src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&enablejsapi=1&playsinline=1&rel=0&origin=${encodeURIComponent(window.location.origin)}`}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                onLoad={handleIframeLoad}
-                style={{ border:"none", display:"block", width:"100%", height:215 }}
-              />
+              <div ref={playerElRef} style={{ width:"100%", height:215 }} />
             ) : (
               <div style={{ height:215, background:`url(https://img.youtube.com/vi/${ytId}/hqdefault.jpg) center/cover no-repeat`, display:"flex", alignItems:"center", justifyContent:"center", borderRadius:16 }}>
                 <div style={{ width:66, height:66, borderRadius:"50%", background:"rgba(255,0,0,0.88)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 18px rgba(0,0,0,0.35)" }}>
@@ -1206,24 +1601,57 @@ function YoutubeSubscribeTask({ task: t, profile, onBack, onComplete, dark }) {
   const T        = theme(dark);
   const duration = t.duration_seconds ?? 30;
   const [phase, setPhase] = useState("ready"); // ready | timing | done
+  const autoCreditedRef = useRef(false);
 
   const timer = useCountdown(duration, async () => {
+    clearActiveTaskTimer();
     await onComplete(t.id);
     setPhase("done");
   });
 
+  // On mount, check whether this task was already started before the
+  // page got reloaded (tab backgrounded/discarded on mobile). If so,
+  // resume from the real elapsed time instead of restarting — and if
+  // enough real time has already passed, credit immediately.
+  useEffect(() => {
+    const stored = readActiveTaskTimer(t.id);
+    if (!stored) return;
+    const elapsed = elapsedSecondsSince(stored.startedAt);
+    const remaining = stored.duration - elapsed;
+    if (remaining <= 0) {
+      if (autoCreditedRef.current) return;
+      autoCreditedRef.current = true;
+      setPhase("timing");
+      clearActiveTaskTimer();
+      onComplete(t.id).then(() => setPhase("done"));
+    } else {
+      setPhase("timing");
+      timer.start(remaining);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.id]);
+
   const handleStart = () => {
     if (!profile?.activated) return;
     if (t.link) window.open(t.link, "_blank");
+    writeActiveTaskTimer(t.id, duration);
     setPhase("timing");
     timer.start();
+  };
+
+  const handleBack = () => {
+    // Don't leave a stale start-time behind — re-opening this same
+    // task later should start fresh, not silently auto-credit off an
+    // old timestamp.
+    if (phase !== "done") clearActiveTaskTimer();
+    onBack();
   };
 
   if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
-      <TaskHeader task={t} onBack={onBack} />
+      <TaskHeader task={t} onBack={handleBack} />
       <div style={{ padding:"0 16px", marginTop:-12 }}>
         <TaskStatBar task={t} dark={dark} />
 
@@ -1278,6 +1706,53 @@ function YoutubeSubscribeTask({ task: t, profile, onBack, onComplete, dark }) {
   );
 }
 
+// ── Photo upload field (camera or gallery) ──────────────────────
+// A plain <input type="file" accept="image/*"> alone works on most
+// mobile browsers (they show a chooser with Camera / Photos / Files),
+// but not reliably on all of them, and offers no explicit camera
+// affordance on desktop webcams. Give two explicit, always-visible
+// entry points instead: one input with capture="environment" that
+// opens the camera directly, and one plain input that opens the
+// gallery/file picker — so someone with no photos already on their
+// phone can still complete the upload by snapping one.
+function PhotoUploadField({ data, name, onPick, dark, compact }) {
+  const T = theme(dark);
+  const cameraRef  = useRef(null);
+  const galleryRef = useRef(null);
+  const pad = compact ? "18px" : "24px";
+  return (
+    <div>
+      <div style={{ border:`2px dashed ${data ? BRAND : T.border}`, borderRadius:12, padding:pad, textAlign:"center", background: data ? "#E1F5EE" : T.bg }}>
+        {data ? (
+          <div>
+            <div style={{ fontSize: compact ? 26 : 32, marginBottom:6 }}>✅</div>
+            <div style={{ fontSize: compact ? 12 : 13, color:BRAND_DARK, fontWeight:600, wordBreak:"break-all" }}>{name}</div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize: compact ? 26 : 32, marginBottom:6 }}>📷</div>
+            <div style={{ fontSize: compact ? 12 : 13, color:T.textSub }}>No photo selected yet</div>
+          </div>
+        )}
+        <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"center" }}>
+          <button type="button" onClick={() => cameraRef.current?.click()}
+            style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"9px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            📷 Take photo
+          </button>
+          <button type="button" onClick={() => galleryRef.current?.click()}
+            style={{ background: dark ? "#1a4030" : "#E1F5EE", color:BRAND_DARK, border:"none", borderRadius:10, padding:"9px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            🖼️ Choose from gallery
+          </button>
+        </div>
+      </div>
+      {/* Direct-to-camera input, for when the user has no photos saved yet */}
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
+      {/* Regular gallery/file picker */}
+      <input ref={galleryRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e => onPick(e.target.files[0])} />
+    </div>
+  );
+}
+
 // ── TikTok Task (Follow / Like / Watch / Comment) ──────────────
 function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
   const T        = theme(dark);
@@ -1288,17 +1763,39 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
   const [proofName, setProofName] = useState("");
   const [err, setErr]       = useState("");
 
-  const timer = useCountdown(duration, () => setPhase("upload"));
+  const timer = useCountdown(duration, () => { clearActiveTaskTimer(); setPhase("upload"); });
+
+  // Resume from a persisted start time if the tab was reloaded
+  // mid-task (see YoutubeSubscribeTask for why this is needed).
+  useEffect(() => {
+    const stored = readActiveTaskTimer(t.id);
+    if (!stored) return;
+    const elapsed = elapsedSecondsSince(stored.startedAt);
+    const remaining = stored.duration - elapsed;
+    clearActiveTaskTimer(); // verification window's role ends either way
+    if (remaining <= 0) {
+      setPhase("upload");
+    } else {
+      setPhase("timing");
+      timer.start(remaining);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.id]);
 
   const handleStart = () => {
     if (!profile?.activated) return;
     if (t.link) window.open(t.link, "_blank");
+    writeActiveTaskTimer(t.id, duration);
     setPhase("timing");
     timer.start();
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
+  const handleBack = () => {
+    if (phase !== "done") clearActiveTaskTimer();
+    onBack();
+  };
+
+  const handleFileChange = (file) => {
     if (!file) return;
     setProofName(file.name);
     const reader = new FileReader();
@@ -1323,7 +1820,7 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
-      <TaskHeader task={t} onBack={onBack} />
+      <TaskHeader task={t} onBack={handleBack} />
       <div style={{ padding:"0 16px", marginTop:-12 }}>
         <TaskStatBar task={t} dark={dark} />
 
@@ -1356,21 +1853,7 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
               Take a screenshot showing you {actionLabel.toLowerCase()}ed on TikTok and upload it below.
             </div>
             {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:8, padding:"10px 12px", fontSize:12, marginBottom:12 }}>{err}</div>}
-            <label style={{ display:"block", border:`2px dashed ${proof ? BRAND : T.border}`, borderRadius:12, padding:"24px", textAlign:"center", cursor:"pointer", background: proof ? "#E1F5EE" : T.bg }}>
-              <input type="file" accept="image/*" style={{ display:"none" }} onChange={handleFileChange} />
-              {proof ? (
-                <div>
-                  <div style={{ fontSize:32, marginBottom:8 }}>✅</div>
-                  <div style={{ fontSize:13, color:BRAND_DARK, fontWeight:600 }}>{proofName}</div>
-                  <div style={{ fontSize:11, color:T.textSub, marginTop:4 }}>Tap to change</div>
-                </div>
-              ) : (
-                <div>
-                  <div style={{ fontSize:32, marginBottom:8 }}>📷</div>
-                  <div style={{ fontSize:13, color:T.textSub }}>Tap to upload screenshot</div>
-                </div>
-              )}
-            </label>
+            <PhotoUploadField data={proof} name={proofName} onPick={handleFileChange} dark={dark} />
           </div>
         )}
 
@@ -1410,6 +1893,111 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
           <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15 }} onClick={handleSubmit} disabled={doing}>
             {doing ? "Submitting..." : "Submit proof & claim reward →"}
           </button>
+        )}
+      </div>
+      <TaskPageStyles />
+    </div>
+  );
+}
+
+// ── Website Visit Task ──────────────────────────────────────────
+// Same pattern as YoutubeSubscribeTask: open the link, run a dwell
+// timer, auto-credit when it completes — with resume-from-reload.
+function WebsiteVisitTask({ task: t, profile, onBack, onComplete, dark }) {
+  const T        = theme(dark);
+  const duration = t.duration_seconds ?? 30;
+  const [phase, setPhase] = useState("ready"); // ready | timing | done
+  const autoCreditedRef = useRef(false);
+
+  const timer = useCountdown(duration, async () => {
+    clearActiveTaskTimer();
+    await onComplete(t.id);
+    setPhase("done");
+  });
+
+  useEffect(() => {
+    const stored = readActiveTaskTimer(t.id);
+    if (!stored) return;
+    const elapsed = elapsedSecondsSince(stored.startedAt);
+    const remaining = stored.duration - elapsed;
+    if (remaining <= 0) {
+      if (autoCreditedRef.current) return;
+      autoCreditedRef.current = true;
+      setPhase("timing");
+      clearActiveTaskTimer();
+      onComplete(t.id).then(() => setPhase("done"));
+    } else {
+      setPhase("timing");
+      timer.start(remaining);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t.id]);
+
+  const handleStart = () => {
+    if (!profile?.activated) return;
+    if (t.link) window.open(t.link, "_blank");
+    writeActiveTaskTimer(t.id, duration);
+    setPhase("timing");
+    timer.start();
+  };
+
+  const handleBack = () => {
+    if (phase !== "done") clearActiveTaskTimer();
+    onBack();
+  };
+
+  if (phase === "done") return <TaskSuccessScreen reward={t.reward} onBack={onBack} dark={dark} />;
+
+  return (
+    <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"'DM Sans',sans-serif", paddingBottom:100 }}>
+      <TaskHeader task={t} onBack={handleBack} />
+      <div style={{ padding:"0 16px", marginTop:-12 }}>
+        <TaskStatBar task={t} dark={dark} />
+
+        {phase === "ready" && (
+          <div style={{ background:T.card, borderRadius:14, padding:"16px", marginBottom:14 }}>
+            <div style={{ fontWeight:600, fontSize:14, marginBottom:12, color:T.text }}>How to earn {fmt(t.reward)}</div>
+            {[
+              "Tap Start Task — the website opens",
+              "Browse the page as instructed",
+              "Come back here and wait for the timer to finish"
+            ].map((s,i) => (
+              <div key={i} style={{ display:"flex", gap:12, marginBottom:10, alignItems:"flex-start" }}>
+                <div style={{ width:26, height:26, borderRadius:"50%", background:"#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700, fontSize:12, color:BRAND_DARK, flexShrink:0 }}>{i+1}</div>
+                <div style={{ fontSize:13, color:T.textSub, lineHeight:1.6, paddingTop:4 }}>{s}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {phase === "timing" && (
+          <div style={{ background:T.card, borderRadius:16, padding:"32px 20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
+            <div style={{ fontSize:48, marginBottom:12 }}>🌐</div>
+            <div style={{ fontSize:11, color:T.textSub, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.08em" }}>Verifying your visit</div>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:52, fontWeight:700, color: timer.timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+              {timer.display}
+            </div>
+            <div style={{ height:8, background: dark ? "#2a5040" : "#eee", borderRadius:4, marginTop:16 }}>
+              <div style={{ height:"100%", width:`${((duration - timer.timeLeft) / duration) * 100}%`, background:BRAND, borderRadius:4, transition:"width 1s linear" }} />
+            </div>
+            <div style={{ fontSize:12, color:T.textSub, marginTop:12 }}>Stay on this page — reward credits when timer hits 0:00</div>
+          </div>
+        )}
+
+        {!profile?.activated && <ActivationBanner />}
+      </div>
+
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, padding:"16px", background:T.card, borderTop:`0.5px solid ${T.border}` }}>
+        {phase === "ready" && (
+          <button style={{ ...S.primaryBtn, padding:"15px 0", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}
+            onClick={handleStart} disabled={!profile?.activated}>
+            {profile?.activated ? <>🌐 Start Task &amp; Open Website</> : "⚡ Activate to earn"}
+          </button>
+        )}
+        {phase === "timing" && (
+          <div style={{ textAlign:"center", padding:"10px 0" }}>
+            <div style={{ fontSize:13, color:T.textSub }}>⏱ Timer running — stay on this page</div>
+          </div>
         )}
       </div>
       <TaskPageStyles />
@@ -1803,6 +2391,7 @@ function TaskDetailPage({ task: t, profile, onBack, onComplete, dark }) {
   if (t.type === "youtube_watch")     return <YoutubeWatchTask     task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "youtube_subscribe") return <YoutubeSubscribeTask task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "tiktok")            return <TiktokTask           task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
+  if (t.type === "website_visit")     return <WebsiteVisitTask     task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "like_product")      return <LikeTask             task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   if (t.type === "like_song")         return <LikeTask             task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
   return <GenericTask task={t} profile={profile} onBack={onBack} onComplete={onComplete} dark={dark} />;
@@ -1847,14 +2436,23 @@ function EarningsChart({ txns, dark }) {
 }
 
 // ── Home Tab ───────────────────────────────────────────────────
-function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, onActivate, onSelectTask, txns, onGoGrow, investments, dark }) {
-  const streakDays  = profile?.streak_days ?? 0;
-  const streakBonus = settings.streak_bonus ?? 5000;
+function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWithdraw, onDeposit, onActivate, txns, onGoGrow, investments, referrals, dark }) {
   const T = theme(dark);
-  const tierInfo = getActiveTier(investments);
+  const tierInfo    = getActiveTier(investments);
+  const kycStatus   = profile?.kyc_status ?? kycSubmission?.status ?? "none";
+  const kycApproved = kycStatus === "approved";
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
+      {profile?.activated && !kycApproved && kycStatus !== "pending" && (
+        <div style={{ margin:"12px 16px 0", background:"linear-gradient(135deg,#FFF7E6,#fef3e2)", borderRadius:14, padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onStartKyc}>
+          <div>
+            <div style={{ fontWeight:700, fontSize:14, color:"#854F0B" }}>🪪 Verify your ID</div>
+            <div style={{ fontSize:12, color:"#a0611a", marginTop:2 }}>Required before your first withdrawal</div>
+          </div>
+          <button style={{ background:"#854F0B", color:"white", border:"none", borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>Verify →</button>
+        </div>
+      )}
       {!profile?.activated && (
         <div style={{ margin:"12px 16px 0", background:`linear-gradient(135deg,#FAEEDA,#fef3e2)`, borderRadius:14, padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onActivate}>
           <div>
@@ -1892,25 +2490,8 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
         </div>
       </div>
 
-      <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 16px 12px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div>
-            <div style={{ fontWeight:600, fontSize:15, color:T.text }}>🔥 Daily streak</div>
-            <div style={{ fontSize:12, color:T.textSub, marginTop:3 }}>
-              {streakDays >= 7 ? `You earned ${fmt(streakBonus)} streak bonus!` : `${7 - streakDays} more days for ${fmt(streakBonus)} bonus`}
-            </div>
-          </div>
-          <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:28, color:BRAND }}>
-            {streakDays}<span style={{ fontSize:14, fontWeight:400, color:T.textSub }}>/7</span>
-          </div>
-        </div>
-        <div style={{ display:"flex", gap:6, marginTop:14 }}>
-          {[...Array(7)].map((_, i) => <div key={i} style={{ flex:1, height:6, borderRadius:3, background: i < streakDays ? BRAND : (dark ? "#2a5040" : "#eee") }} />)}
-        </div>
-      </div>
-
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, margin:"0 16px 16px" }}>
-        {[{ label:"Tasks done", value:profile?.tasks_done ?? 0, icon:"✅" },{ label:"Referrals", value:profile?.referrals ?? 0, icon:"👥" }].map(s => (
+        {[{ label:"Tasks done", value:profile?.tasks_done ?? 0, icon:"✅" },{ label:"Referrals", value:referrals?.length ?? 0, icon:"👥" }].map(s => (
           <div key={s.label} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:0, display:"flex", alignItems:"center", gap:12, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
             <span style={{ fontSize:28 }}>{s.icon}</span>
             <div>
@@ -1921,14 +2502,6 @@ function HomeTab({ profile, tasks, settings, onGoTasks, onWithdraw, onDeposit, o
         ))}
       </div>
 
-      <div style={{ margin:"0 16px" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-          <span style={{ fontWeight:600, fontSize:15, color:T.text }}>Available tasks</span>
-          <button style={{ background:"none", border:"none", color:BRAND, fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onGoTasks}>See all →</button>
-        </div>
-        {tasks.slice(0, 3).map(t => <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} compact dark={dark} />)}
-        {tasks.length === 0 && <div style={{ color:T.textSub, fontSize:13, textAlign:"center", padding:24 }}>All tasks done! Check back soon 🎉</div>}
-      </div>
     </div>
   );
 }
@@ -1941,6 +2514,7 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
   // Gate: user must have an active investment plan
   const tierInfo      = getActiveTier(investments);
   const hasActivePlan = !!tierInfo;
+  const earningInfo   = getTaskEarningInfo(investments);
 
   if (!hasActivePlan) {
     return (
@@ -1967,29 +2541,53 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
     );
   }
 
-  // Filter tasks by plan access — Legend-only tasks hidden from non-Legend
-  const isLegend = !!tierInfo?.exclusiveTasks;
-  const accessibleTasks = tasks.filter(t => {
-    if (t.subtype === "legend_only") return isLegend;
-    return true;
-  });
+  // Every active plan's daily task slots are used up for today.
+  if (earningInfo && earningInfo.tasksRemainingToday === 0) {
+    return (
+      <div style={{ animation:"slideUp 0.3s ease", padding:"40px 24px", textAlign:"center" }}>
+        <div style={{ fontSize:64, marginBottom:16 }}>⏰</div>
+        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:10 }}>
+          All done for today
+        </div>
+        <div style={{ fontSize:14, color:T.textSub, lineHeight:1.7, marginBottom:24, maxWidth:280, margin:"0 auto 24px" }}>
+          You've completed all {earningInfo.totalDailyTasks} tasks across your {earningInfo.plansCount} active plan{earningInfo.plansCount !== 1 ? "s" : ""} today. New tasks unlock tomorrow.
+        </div>
+        <button style={{ ...S.primaryBtn, width:"auto", padding:"13px 36px" }} onClick={onGoGrow}>
+          Buy another plan for more tasks →
+        </button>
+      </div>
+    );
+  }
 
-  const categories = ["all", ...new Set(accessibleTasks.map(t => t.category).filter(Boolean))];
-  const filtered   = filter === "all" ? accessibleTasks : accessibleTasks.filter(t => t.category === filter);
+  // Filter tasks by plan access — a task's min_plan_level (if set) must be
+  // <= the user's active plan level. legend_only is kept as a shorthand for
+  // min_plan_level 16 so existing tasks created before this field existed
+  // keep working unchanged. The actual reward for whichever task is
+  // completed next is shown once, in NextRewardBanner above — not
+  // stamped onto every card — since it's decided by which plan absorbs
+  // the completion, not by the specific task.
+  const userLevel = tierInfo?.level ?? 0;
+  const accessibleTasks = tasks
+    .filter(t => {
+      const required = t.subtype === "legend_only" ? 16 : (t.min_plan_level ?? 1);
+      return userLevel >= required;
+    });
+
+  // Only ever show as many task cards as the user's active plan(s) can
+  // still pay out today — e.g. a single Beginner plan (1 daily task)
+  // should show exactly 1 task, not the whole catalog. Once a task is
+  // completed, tasksRemainingToday drops and the next refresh shows
+  // one fewer card, until the "all done for today" screen above takes over.
+  const dailyQuota = earningInfo?.tasksRemainingToday ?? accessibleTasks.length;
+  const quotaTasks = accessibleTasks.slice(0, dailyQuota);
+
+  const categories = ["all", ...new Set(quotaTasks.map(t => t.category).filter(Boolean))];
+  const filtered   = filter === "all" ? quotaTasks : quotaTasks.filter(t => t.category === filter);
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
-      {/* Daily limit banner */}
-      {tierInfo && (
-        <div style={{ margin:"12px 16px 0", background: dark ? "#142e20" : "#E1F5EE", borderRadius:12, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div style={{ fontSize:12, color:BRAND_DARK }}>
-            <strong>{tierInfo.dailyTasks === null ? "Unlimited" : `${tierInfo.dailyTasks} tasks`}</strong>/day · <strong>×{tierInfo.multiplier.toFixed(2)}</strong> reward boost
-          </div>
-          <span style={{ background:BRAND, color:"white", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>
-            {tierInfo.planName} {tierInfo.icon}
-          </span>
-        </div>
-      )}
+      {/* Daily limit banner — aggregated across every active plan */}
+      <NextRewardBanner earningInfo={earningInfo} dark={dark} />
       <div style={{ padding:"12px 16px 12px" }}>
         <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 }}>
           {categories.map(c => (
@@ -2119,10 +2717,30 @@ function TaskCard({ task: t, onSelect, compact, dark }) {
 }
 
 // ── Wallet Tab ─────────────────────────────────────────────────
-function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw, onDeposit, dark }) {
+function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw, onDeposit, dark, userId }) {
   const [view, setView] = useState("transactions");
   const T = theme(dark);
   const minW = settings.min_withdrawal ?? 1000;
+
+  // Local "clear history" — hides entries at/before the cutoff for this
+  // device/user. Doesn't delete the underlying records (these are real
+  // financial transactions), just dismisses them from view here.
+  const clearedKey = `earnnet_history_cleared_${userId}`;
+  const [clearedAt, setClearedAt] = useState(() => {
+    try { return parseInt(localStorage.getItem(clearedKey) ?? "0", 10) || 0; } catch { return 0; }
+  });
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const visibleTxns        = txns.filter(tx => new Date(tx.created_at).getTime() > clearedAt);
+  const visibleWithdrawals = withdrawals.filter(w => new Date(w.requested_at).getTime() > clearedAt);
+  const visibleDeposits    = deposits.filter(d => new Date(d.requested_at).getTime() > clearedAt);
+  const nothingToClear = visibleTxns.length === 0 && visibleWithdrawals.length === 0 && visibleDeposits.length === 0;
+
+  const clearHistory = () => {
+    const now = Date.now();
+    setClearedAt(now);
+    try { localStorage.setItem(clearedKey, String(now)); } catch {}
+  };
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
@@ -2136,22 +2754,38 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
         </div>
       </div>
 
-      <div style={{ display:"flex", gap:8, padding:"0 16px 16px" }}>
-        {["transactions","withdrawals","deposits"].map(v => (
-          <button key={v} onClick={() => setView(v)} style={{ padding:"7px 16px", borderRadius:20, border:`0.5px solid ${view === v ? BRAND : T.chipBrd}`, background: view === v ? BRAND : T.chipBg, color: view === v ? "white" : T.text, fontSize:12, cursor:"pointer", whiteSpace:"nowrap", fontWeight: view === v ? 600 : 400 }}>
-            {v.charAt(0).toUpperCase() + v.slice(1)}
+      <div style={{ padding:"0 16px 16px" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+          <div style={{ fontWeight:600, fontSize:14, color:T.text }}>Transaction history</div>
+          <button
+            onClick={() => {
+              if (confirmClear) { clearHistory(); setConfirmClear(false); }
+              else { setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000); }
+            }}
+            disabled={nothingToClear}
+            style={{ background:"none", border:"none", color: nothingToClear ? T.textSub : "#E24B4A", fontSize:11, fontWeight:600, cursor: nothingToClear ? "default" : "pointer", padding:0 }}>
+            {confirmClear ? "Tap to confirm" : "🗑 Clear history"}
           </button>
-        ))}
+        </div>
+        <select
+          value={view}
+          onChange={e => setView(e.target.value)}
+          style={{ width:"100%", padding:"11px 14px", borderRadius:12, border:`0.5px solid ${T.chipBrd}`, background:T.chipBg, color:T.text, fontSize:13, fontWeight:600, cursor:"pointer", appearance:"none", WebkitAppearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%231D9E75' stroke-width='2' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center" }}
+        >
+          <option value="transactions">Transactions ({visibleTxns.length})</option>
+          <option value="withdrawals">Withdrawals ({visibleWithdrawals.length})</option>
+          <option value="deposits">Deposits ({visibleDeposits.length})</option>
+        </select>
       </div>
 
       <div style={{ padding:"0 16px" }}>
-        {view === "transactions" && (txns.length === 0
+        {view === "transactions" && (visibleTxns.length === 0
           ? <div style={{ textAlign:"center", color:T.textSub, padding:30 }}>No transactions yet</div>
-          : txns.map(tx => <TxRow key={tx.id} tx={tx} dark={dark} />)
+          : visibleTxns.map(tx => <TxRow key={tx.id} tx={tx} dark={dark} />)
         )}
-        {view === "withdrawals" && (withdrawals.length === 0
+        {view === "withdrawals" && (visibleWithdrawals.length === 0
           ? <div style={{ textAlign:"center", color:T.textSub, padding:30 }}>No withdrawal history</div>
-          : withdrawals.map(w => (
+          : visibleWithdrawals.map(w => (
               <div key={w.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                 <div>
                   <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{fmt(w.amount)}</div>
@@ -2161,9 +2795,9 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
               </div>
             ))
         )}
-        {view === "deposits" && (deposits.length === 0
+        {view === "deposits" && (visibleDeposits.length === 0
           ? <div style={{ textAlign:"center", color:T.textSub, padding:30 }}>No deposit history</div>
-          : deposits.map(d => (
+          : visibleDeposits.map(d => (
               <div key={d.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                 <div>
                   <div style={{ fontWeight:600, fontSize:14, color:T.text }}>+{fmt(d.amount)}</div>
@@ -2204,42 +2838,11 @@ function StatusPill({ status }) {
   return <span style={{ background:c.bg, color:c.tc, padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:600 }}>{status}</span>;
 }
 
-// ── Live Profit Counter Hook ───────────────────────────────────
-// Calculates profit earned so far for a single active investment,
-// ticking up in real time based on elapsed seconds.
-function useLiveProfitCounter(investment) {
-  const [profit, setProfit] = useState(0);
-
-  useEffect(() => {
-    if (!investment || investment.status !== "active") {
-      setProfit(0);
-      return;
-    }
-    const startMs       = new Date(investment.starts_at).getTime();
-    const endMs         = new Date(investment.ends_at).getTime();
-    const totalSeconds  = Math.max(1, (endMs - startMs) / 1000);
-    const totalProfit   = investment.expected_profit;
-    const perSecond     = totalProfit / totalSeconds;
-
-    const tick = () => {
-      const elapsedSeconds = Math.max(0, (Date.now() - startMs) / 1000);
-      const capped         = Math.min(elapsedSeconds, totalSeconds);
-      setProfit(Math.floor(capped * perSecond));
-    };
-
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [investment?.id]);
-
-  return profit;
-}
-
 // ── Grow Tab ───────────────────────────────────────────────────
 function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh, dark }) {
   const T           = theme(dark);
   const activeInvs  = investments.filter(i => i.status === "active");
-  const historyInvs = investments.filter(i => i.status === "paid_out");
+  const historyInvs = investments.filter(i => i.status === "completed");
 
   // Highest active tier, derived from the investments themselves.
   // getActiveTier already returns everything needed for display
@@ -2249,22 +2852,12 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
 
   const totalLocked = activeInvs.reduce((s, i) => s + (i.locked_task_earnings ?? 0), 0);
 
-  // Total live profit ticker across all active investments (principal growth only —
-  // locked task earnings are added in discrete chunks as tasks complete, shown separately)
-  const [displayProfit, setDisplayProfit] = useState(0);
-  useEffect(() => {
-    const calc = () => activeInvs.reduce((sum, inv) => {
-      const startMs = new Date(inv.starts_at).getTime();
-      const endMs   = new Date(inv.ends_at).getTime();
-      const total   = Math.max(1, (endMs - startMs) / 1000);
-      const ps      = inv.expected_profit / total;
-      const el      = Math.max(0, (Date.now() - startMs) / 1000);
-      return sum + Math.floor(Math.min(el, total) * ps);
-    }, 0);
-    setDisplayProfit(calc());
-    const id = setInterval(() => setDisplayProfit(calc()), 1000);
-    return () => clearInterval(id);
-  }, [investments]);
+  // Real profit across all active investments = sum of locked_task_earnings,
+  // i.e. money actually earned by completing tasks. This used to be a fake
+  // per-second ticker derived from expected_profit/elapsed-time, invented
+  // independently of tasks done — that number was then paid AGAIN at
+  // maturity via locked_task_earnings, which was the double-profit bug.
+  const displayProfit = totalLocked;
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:100 }}>
@@ -2275,19 +2868,19 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
         boxShadow:"0 8px 32px rgba(15,46,34,0.4)", position:"relative", overflow:"hidden" }}>
         <div style={{ position:"absolute", right:-30, top:-30, width:130, height:130, borderRadius:"50%", background:"rgba(255,255,255,0.05)" }} />
         <div style={{ position:"absolute", right:20, bottom:-40, width:100, height:100, borderRadius:"50%", background:"rgba(255,255,255,0.04)" }} />
-        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>Investment profit growing</div>
+        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>Task earnings so far</div>
         <div style={{ fontFamily:"'Sora',sans-serif", fontSize:42, fontWeight:700, letterSpacing:-1, marginBottom:4 }}>
           {fmt(displayProfit)}
         </div>
         <div style={{ fontSize:12, opacity:0.65, marginBottom:14 }}>
-          Across {activeInvs.length} active plan{activeInvs.length !== 1 ? "s" : ""} · updates every second
+          Across {activeInvs.length} active plan{activeInvs.length !== 1 ? "s" : ""} · grows as tasks complete
         </div>
         {totalLocked > 0 && (
           <div style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.10)", borderRadius:12, padding:"10px 14px", marginBottom:16 }}>
             <span style={{ fontSize:16 }}>🔒</span>
             <div>
               <div style={{ fontSize:13, fontWeight:700 }}>{fmt(totalLocked)} in locked task earnings</div>
-              <div style={{ fontSize:10, opacity:0.75 }}>Released to your balance when each plan matures</div>
+              <div style={{ fontSize:10, opacity:0.75 }}>Released to your balance monthly</div>
             </div>
           </div>
         )}
@@ -2313,8 +2906,8 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
         <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:14 }}>📋 Your Task Access</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
           {[
-            ["Tasks/day",   tierInfo ? tierInfo.dailyTasks : "0",                                              tierInfo ? tierInfo.color : "#aaa"],
-            ["Per task",    tierInfo ? fmt(tierInfo.taskReward) : "—",                                         tierInfo ? tierInfo.color : "#aaa"],
+            ["Tasks/day",   activeInvs.length ? String(activeInvs.reduce((s,i)=>s+(i.daily_tasks??0),0)) : "0",   tierInfo ? tierInfo.color : "#aaa"],
+            ["Auto-mode",   activeInvs.filter(i=>i.mode==="auto").length,                                          tierInfo ? tierInfo.color : "#aaa"],
             ["Exclusive",   tierInfo?.exclusiveTasks ? "Yes 👑" : (tierInfo ? "No" : "—"),                     tierInfo?.exclusiveTasks ? "#B8860B" : "#aaa"],
           ].map(([lbl, val, tc]) => (
             <div key={lbl} style={{ textAlign:"center", background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px 6px" }}>
@@ -2323,28 +2916,31 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
             </div>
           ))}
         </div>
-        <div style={{ fontSize:11, color:T.textSub, marginTop:12, lineHeight:1.5 }}>
-          💡 Task earnings are locked while a plan is active — they're paid out together with your principal and profit when that plan matures.
-        </div>
+        {activeInvs.length > 1 && (
+          <div style={{ fontSize:11, color:T.textSub, marginTop:12, lineHeight:1.6 }}>
+            {activeInvs.map(i => `${i.plan_name}: ${fmt(i.task_reward)}/task × ${i.daily_tasks}/day${i.mode==="auto" ? " (auto)" : ""}`).join(" · ")}
+          </div>
+        )}
       </div>
 
       {/* ── Active investments ── */}
       {activeInvs.length > 0 && (
         <div style={{ padding:"0 16px", marginBottom:16 }}>
           <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📈 Your active investments</div>
-          {activeInvs.map(inv => <ActiveInvestmentCard key={inv.id} investment={inv} dark={dark} />)}
+          {activeInvs.map(inv => <ActiveInvestmentCard key={inv.id} investment={inv} userId={profile?.id} walletBalance={profile?.balance ?? 0} onRefresh={onRefresh} dark={dark} />)}
         </div>
       )}
 
-      {/* ── Vault ladder — 11 fixed tiers, each a fixed amount and a fixed 30-day term ── */}
+      {/* ── Vault ladder — 16 fixed tiers, each a fixed amount, 65%/month, 12-cycle (1yr) lockup ── */}
       <div style={{ padding:"0 16px", marginBottom:16 }}>
         <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:4 }}>Growth Plans</div>
         <div style={{ fontSize:12, color:T.textSub, marginBottom:14 }}>
-          Each plan has a fixed amount, a fixed 30-day term, and its own daily task count and reward.
+          Each plan pays 65% profit monthly, with its own daily task count and reward.
         </div>
         {plans.map(plan => {
           const vt    = tierStyle(plan.level);
           const isTop = plan.level === 16;
+          const gate  = canPurchasePlan(investments, plan.level);
 
           return (
             <div key={plan.key} style={{
@@ -2361,7 +2957,7 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
                     <div style={{ fontSize:30, marginBottom:4 }}>{plan.icon}</div>
                     <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
                     <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                      {plan.ratePercent}% per month · {fmtDuration()}
+                      65% monthly profit
                     </div>
                   </div>
                   <div style={{ textAlign:"right" }}>
@@ -2398,11 +2994,17 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
                 )}
 
                 <button
-                  style={{ ...S.primaryBtn, background:vt.gradient, padding:"12px 0", fontSize:14, fontWeight:700 }}
-                  onClick={() => onBuyPlan(plan)}
+                  style={{ ...S.primaryBtn, background: gate.allowed ? vt.gradient : "#c7ccd1",
+                    padding:"12px 0", fontSize:14, fontWeight:700,
+                    cursor: gate.allowed ? "pointer" : "not-allowed", opacity: gate.allowed ? 1 : 0.75 }}
+                  onClick={() => gate.allowed && onBuyPlan(plan)}
+                  disabled={!gate.allowed}
                 >
-                  Invest {fmt(plan.amount)} →
+                  {gate.allowed ? `Invest ${fmt(plan.amount)} →` : "Plan already active"}
                 </button>
+                {!gate.allowed && (
+                  <div style={{ fontSize:11, color:"#993C1D", marginTop:6, textAlign:"center" }}>{gate.reason}</div>
+                )}
               </div>
             </div>
           );
@@ -2412,28 +3014,33 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
       {/* ── Investment history ── */}
       {historyInvs.length > 0 && (
         <div style={{ padding:"0 16px", marginBottom:20 }}>
-          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📜 Matured plans</div>
+          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📜 Completed plans</div>
           {historyInvs.map(inv => {
             const vt = tierStyle(inv.plan_level ?? 1);
-            const payout = inv.expected_total + (inv.locked_task_earnings ?? 0);
+            // Monthly profit was already paid out cycle by cycle along the
+            // way — what releases at completion is current_principal, the
+            // original amount plus anything the user chose to reinvest into
+            // it on a month when the referral condition wasn't met.
+            const principalOut = inv.current_principal ?? inv.amount;
+            const bonus         = principalOut - inv.amount;
             return (
               <div key={inv.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
                 <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
                   <div style={{ width:40, height:40, borderRadius:12, background:vt.gradient, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{inv.plan_icon}</div>
                   <div style={{ flex:1 }}>
                     <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{inv.plan_name} Plan</div>
-                    <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Matured {new Date(inv.credited_at ?? inv.ends_at).toLocaleDateString()}</div>
+                    <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Completed {new Date(inv.credited_at ?? inv.ends_at).toLocaleDateString()}</div>
                   </div>
                   <div style={{ textAlign:"right" }}>
-                    <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:14 }}>+{fmt(payout - inv.amount)}</div>
-                    <div style={{ fontSize:10, color:T.textSub }}>total profit</div>
+                    <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:14 }}>{fmt(principalOut)}</div>
+                    <div style={{ fontSize:10, color:T.textSub }}>{bonus > 0 ? `principal + ${fmt(bonus)} reinvested` : "principal returned"}</div>
                   </div>
                 </div>
                 <button
                   style={{ width:"100%", background: dark ? "#142e20" : "#f0faf6", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"9px 0", fontSize:12, fontWeight:700, color:BRAND_DARK, cursor:"pointer" }}
                   onClick={() => onReinvest(inv)}
                 >
-                  🔁 Reinvest {fmt(payout)}
+                  🔁 Reinvest {fmt(principalOut)} into a new plan
                 </button>
               </div>
             );
@@ -2444,20 +3051,45 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
   );
 }
 
-// ── Active Investment Card (with live ticking profit) ──────────
-function ActiveInvestmentCard({ investment: inv, dark }) {
-  const T           = theme(dark);
-  const vt          = tierStyle(inv.plan_level ?? 1);
-  const liveProfit  = useLiveProfitCounter(inv);
-  const totalProfit = inv.expected_profit;
-  const pct         = totalProfit > 0 ? Math.min(100, Math.round((liveProfit / totalProfit) * 100)) : 0;
-  const locked      = inv.locked_task_earnings ?? 0;
+// ── Active Investment Card (12-cycle monthly model) ──────────
+// Principal is locked for all 12 cycles; each cycle's task-earned
+// profit (locked_task_earnings) only pays out once that cycle's
+// referral condition is met (see referralRequirementForCycle, which
+// mirrors check_monthly_eligibility on the backend). The card itself
+// just shows the amount growing — the referral-progress explanation
+// only shows up in WithdrawModal, and only if it's actually relevant
+// to what the user's trying to withdraw right now.
+function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefresh, dark }) {
+  const T            = theme(dark);
+  const vt           = tierStyle(inv.plan_level ?? 1);
+  const locked       = inv.locked_task_earnings ?? 0;
+  const isAuto       = inv.mode === "auto";
+  const autoFee      = (inv.plan_level ?? 1) * 3000;
+  const cycleNumber  = inv.cycle_number ?? 0;
+  const cyclesTotal  = 12;
+  const cyclePct     = Math.min(100, Math.round((cycleNumber / cyclesTotal) * 100));
+  const currentPrincipal = inv.current_principal ?? inv.amount;
+  const [enabling, setEnabling]   = useState(false);
+  const [err, setErr]             = useState("");
 
-  const endsAt   = new Date(inv.ends_at);
-  const now      = new Date();
-  const msLeft   = Math.max(0, endsAt - now);
-  const daysLeft = Math.floor(msLeft / 86400000);
-  const hrsLeft  = Math.floor((msLeft % 86400000) / 3600000);
+  const nextDue     = inv.next_payout_due_at ? new Date(inv.next_payout_due_at) : null;
+  const now         = new Date();
+  const msLeft      = nextDue ? Math.max(0, nextDue - now) : 0;
+  const daysLeft    = Math.floor(msLeft / 86400000);
+  const hrsLeft     = Math.floor((msLeft % 86400000) / 3600000);
+
+  const handleEnableAuto = async () => {
+    setErr("");
+    if (walletBalance < autoFee) return setErr(`Need ${fmt(autoFee)} in your wallet to switch this plan to auto-mode.`);
+    setEnabling(true);
+    try {
+      await enableAutoModeForPlan(userId, inv.id);
+      await onRefresh?.();
+    } catch (e) {
+      setErr(e.message ?? "Could not enable auto-mode");
+    }
+    setEnabling(false);
+  };
 
   return (
     <div style={{ background:T.card, borderRadius:18, marginBottom:12, overflow:"hidden", boxShadow:"0 4px 16px rgba(0,0,0,0.1)", border:`0.5px solid ${T.border}` }}>
@@ -2466,52 +3098,62 @@ function ActiveInvestmentCard({ investment: inv, dark }) {
           <span style={{ fontSize:24 }}>{inv.plan_icon}</span>
           <div>
             <div style={{ fontWeight:700, fontSize:16 }}>{inv.plan_name} Plan</div>
-            <div style={{ fontSize:11, opacity:0.8 }}>{planByLevel(inv.plan_level)?.ratePercent ?? 30}%/month · {fmtDuration()} term</div>
+            <div style={{ fontSize:11, opacity:0.8 }}>Cycle {cycleNumber} of {cyclesTotal} · {isAuto ? "⚡ Auto-mode" : "👆 Manual"}</div>
           </div>
         </div>
         <div style={{ textAlign:"right" }}>
-          <div style={{ fontSize:10, opacity:0.75 }}>Principal</div>
-          <div style={{ fontWeight:700, fontSize:15 }}>{fmt(inv.amount)}</div>
+          <div style={{ fontSize:10, opacity:0.75 }}>Principal (locked)</div>
+          <div style={{ fontWeight:700, fontSize:15 }}>{fmt(currentPrincipal)}</div>
         </div>
       </div>
 
       <div style={{ padding:"16px 18px" }}>
-        {/* Live profit counter */}
+        {/* This cycle's task earnings */}
         <div style={{ textAlign:"center", marginBottom:14, background: dark ? "#142e20" : "#f0faf6", borderRadius:14, padding:"14px" }}>
           <div style={{ fontSize:10, color:T.textSub, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>
-            Investment profit earned so far
+            This cycle's task earnings
           </div>
           <div style={{ fontFamily:"'Sora',sans-serif", fontSize:32, fontWeight:700, color:BRAND_DARK, letterSpacing:-1 }}>
-            {fmt(liveProfit)}
+            {fmt(locked)}
           </div>
           <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
-            of {fmt(totalProfit)} total · ticking up every second
+            of {fmt(inv.task_reward * inv.daily_tasks * 30)} target · grows as tasks complete
           </div>
         </div>
 
-        {locked > 0 && (
-          <div style={{ display:"flex", alignItems:"center", gap:8, background: dark ? "#2a2410" : "#FFF8E1", borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
-            <span style={{ fontSize:16 }}>🔒</span>
-            <div style={{ fontSize:12, color: dark ? "#FFD700" : "#7A5000" }}>
-              <strong>{fmt(locked)}</strong> in task earnings locked to this plan — released at maturity
+        {!isAuto && (
+          <div style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+              <div style={{ fontSize:12, color:T.text }}>
+                Forgot to turn on auto-mode? Switch this plan over for a one-time <strong>{fmt(autoFee)}</strong> fee, charged from your wallet.
+              </div>
+              <button
+                onClick={handleEnableAuto}
+                disabled={enabling}
+                style={{ flexShrink:0, border:"none", borderRadius:8, padding:"8px 12px", fontSize:12, fontWeight:700,
+                  background: BRAND, color:"white", cursor: enabling ? "default" : "pointer", opacity: enabling ? 0.7 : 1 }}
+              >
+                {enabling ? "..." : "⚡ Enable"}
+              </button>
             </div>
           </div>
         )}
+        {err && <div style={{ fontSize:11, color:"#c0392b", marginBottom:14 }}>{err}</div>}
 
-        {/* Progress bar */}
+        {/* Cycle progress bar */}
         <div style={{ marginBottom:10 }}>
           <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.textSub, marginBottom:5 }}>
-            <span>{pct}% complete</span>
-            <span>{daysLeft}d {hrsLeft}h remaining</span>
+            <span>{cyclePct}% through the year</span>
+            <span>{nextDue ? `${daysLeft}d ${hrsLeft}h to next payout` : "—"}</span>
           </div>
           <div style={{ height:8, background: dark ? "#1a3d2b" : "#eee", borderRadius:4 }}>
-            <div style={{ height:"100%", width:`${pct}%`, background:`linear-gradient(90deg,${BRAND},${BRAND_DARK})`, borderRadius:4, transition:"width 1s linear" }} />
+            <div style={{ height:"100%", width:`${cyclePct}%`, background:`linear-gradient(90deg,${BRAND},${BRAND_DARK})`, borderRadius:4, transition:"width 1s linear" }} />
           </div>
         </div>
 
         <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.textSub }}>
           <span>Started {new Date(inv.starts_at).toLocaleDateString()}</span>
-          <span>Matures {new Date(inv.ends_at).toLocaleDateString()}</span>
+          <span>Principal returns {new Date(inv.ends_at).toLocaleDateString()}</span>
         </div>
       </div>
     </div>
@@ -2525,10 +3167,19 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   // Amount and term are fixed per plan — nothing for the user to pick here.
   const amountNum     = plan.amount;
   const duration      = plan.durationDays;
+  // Auto-mode: pay a one-time fee (escalates 3,000/level) to have the
+  // plan's daily tasks completed automatically instead of tapping through
+  // them yourself. A plan is either auto or manual — never both — but the
+  // yield (target profit) is identical either way, since either way profit
+  // only comes from completed tasks; auto-mode just completes them for you.
+  const [autoMode, setAutoMode]  = useState(false);
+  const autoModeFee   = plan.level * 3000;
+  const totalCharge    = amountNum + (autoMode ? autoModeFee : 0);
+
   const walletBalance = profile?.balance ?? 0;
-  const walletEnough  = walletBalance >= amountNum;
-  const [phone, setPhone]     = useState(profile?.phone ?? "");
-  const [method, setMethod]   = useState(detectMethod(profile?.phone));
+  const walletEnough  = walletBalance >= totalCharge;
+  const [phone, setPhone]     = useState(normalizePhone(profile?.phone));
+  const [method, setMethod]   = useState(detectMethod(normalizePhone(profile?.phone)));
   const [payWith, setPayWith] = useState(walletEnough ? "wallet" : "mobile"); // wallet | mobile
   const [loading, setLoading] = useState(false);
   const [err, setErr]         = useState("");
@@ -2538,11 +3189,14 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
 
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
+  const pendingKey = `earnnet_pending_invest_${userId}`;
+
   // Poll for balance change after LivePay prompt
   const { startPolling, stopPolling } = useDepositPolling(userId, async (newBalance) => {
     // Payment confirmed — now activate the plan in DB
     try {
-      await buyInvestmentPlan(userId, plan.level, amountNum, duration);
+      await buyInvestmentPlan(userId, plan.level, autoMode ? "auto" : "manual");
+      try { localStorage.removeItem(pendingKey); } catch {}
       setStep("success");
       await onSuccess();
     } catch (e) {
@@ -2557,10 +3211,10 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
     // Paying from existing wallet balance — no mobile money prompt needed,
     // the same way a reinvestment skips a fresh payment.
     if (payWith === "wallet") {
-      if (!walletEnough) return setErr("Your wallet balance is too low for this plan");
+      if (!walletEnough) return setErr("Your wallet balance is too low for this plan" + (autoMode ? " + auto-mode fee" : ""));
       setLoading(true);
       try {
-        await buyInvestmentPlan(userId, plan.level, amountNum, duration);
+        await buyInvestmentPlan(userId, plan.level, autoMode ? "auto" : "manual");
         setStep("success");
         await onSuccess();
       } catch (e) {
@@ -2573,8 +3227,18 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
     if (!phone) return setErr("Enter your mobile money number");
     setLoading(true);
     try {
-      await requestInvestmentPayment(userId, amountNum, method, phone);
-      startPolling(profile?.balance ?? 0);
+      const startedBalance = profile?.balance ?? 0;
+      await requestInvestmentPayment(userId, totalCharge, method, phone);
+      // Payment has been requested — a payment in flight now, even if this
+      // modal never gets the chance to see it land (app backgrounded,
+      // tab closed, phone locked). MainApp's recovery effect will finish
+      // the purchase later if that happens.
+      try {
+        localStorage.setItem(pendingKey, JSON.stringify({
+          level: plan.level, autoMode, startedBalance, requestedAt: Date.now(),
+        }));
+      } catch {}
+      startPolling(startedBalance);
       setStep("waiting");
     } catch (e) {
       setErr(e.message ?? "Payment request failed");
@@ -2591,15 +3255,17 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
             {plan.name} Plan Active!
           </div>
           <div style={{ fontSize:14, color:T.textSub, marginBottom:8, lineHeight:1.7 }}>
-            Your investment is now growing. Come back to watch your profits tick up in real time.
+            {autoMode
+              ? "Your plan is now active. Your daily tasks will complete automatically, and your profit grows as each one finishes."
+              : "Your plan is now active. Complete your daily tasks to earn profit — nothing accrues until a task is done."}
           </div>
           <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px", marginBottom:24 }}>
-            <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Expected profit at maturity</div>
+            <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Target profit this cycle</div>
             <div style={{ fontFamily:"'Sora',sans-serif", fontSize:28, fontWeight:700, color:BRAND_DARK }}>{fmt(totalProfit)}</div>
-            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>in {fmtDuration()}</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>released to your balance once the cycle completes</div>
           </div>
           <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px", background:vt.gradient }} onClick={onClose}>
-            Watch it grow →
+            {autoMode ? "Got it →" : "Start my tasks →"}
           </button>
         </div>
       </div>
@@ -2625,6 +3291,9 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           <button onClick={() => { stopPolling(); setStep("confirm"); }} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"10px 24px", fontSize:13, color:T.textSub, cursor:"pointer" }}>
             Cancel
           </button>
+          <div style={{ fontSize:11, color:T.textSub, marginTop:14, lineHeight:1.5 }}>
+            If you already entered your PIN, your plan will still activate automatically once the payment lands — even from here.
+          </div>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </div>
@@ -2644,7 +3313,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
                 {plan.name} Plan
               </div>
               <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                {plan.ratePercent}% per month
+                65% monthly profit
               </div>
             </div>
             <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
@@ -2654,13 +3323,13 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
         <div style={{ padding:"20px 22px 32px" }}>
           {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
-          {/* Summary cards — amount and term are fixed for this plan */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+          {/* Summary cards */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
             {[
-              ["You pay", fmt(amountNum)],
-              ["You earn", fmt(totalProfit)],
-              ["Term", fmtDuration()],
-              ["Monthly rate", `${plan.ratePercent}%`],
+              ["You pay", fmt(totalCharge)],
+              ["Target profit/cycle", fmt(totalProfit)],
+              ["Tasks/day", String(plan.dailyTasks)],
+              ["Per task", fmt(plan.taskReward)],
             ].map(([lbl, val]) => (
               <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
@@ -2668,6 +3337,32 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
               </div>
             ))}
           </div>
+
+          {/* Auto-mode toggle — pay a one-time fee so the plan's tasks complete
+              automatically instead of you tapping through them. Same target
+              yield either way; only who triggers each task differs. */}
+          <button
+            type="button"
+            onClick={() => setAutoMode(a => !a)}
+            style={{
+              width:"100%", textAlign:"left", padding:"12px 14px", borderRadius:12, marginBottom:16, cursor:"pointer",
+              border: autoMode ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
+              background: autoMode ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+              display:"flex", justifyContent:"space-between", alignItems:"center",
+            }}
+          >
+            <div>
+              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>⚡ Auto-mode {autoMode ? "(on)" : "(off)"}</div>
+              <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
+                {autoMode
+                  ? `Tasks complete automatically. One-time fee: ${fmt(autoModeFee)}.`
+                  : `Do tasks yourself for free, or pay ${fmt(autoModeFee)} once to automate them.`}
+              </div>
+            </div>
+            <div style={{ width:44, height:24, borderRadius:20, background: autoMode ? BRAND : (dark ? "#2a5040" : "#ddd"), position:"relative", flexShrink:0 }}>
+              <div style={{ width:18, height:18, borderRadius:"50%", background:"white", position:"absolute", top:3, left: autoMode ? 23 : 3, transition:"left 0.15s ease" }} />
+            </div>
+          </button>
 
           <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Pay with</label>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
@@ -2713,12 +3408,13 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient, opacity: (payWith === "wallet" && !walletEnough) ? 0.6 : 1 }} onClick={handleSubmit} disabled={loading || (payWith === "wallet" && !walletEnough)}>
             {loading
               ? (payWith === "wallet" ? "Activating..." : "Sending prompt...")
-              : (payWith === "wallet" ? `Pay ${fmt(amountNum)} from wallet & activate →` : `Pay ${fmt(amountNum)} & activate →`)}
+              : (payWith === "wallet" ? `Pay ${fmt(totalCharge)} from wallet & activate →` : `Pay ${fmt(totalCharge)} & activate →`)}
           </button>
           <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:10, lineHeight:1.6 }}>
-            {payWith === "wallet"
-              ? `${fmt(amountNum)} will be deducted from your wallet balance and locked for ${fmtDuration()}. Principal + ${fmt(totalProfit)} profit, plus any task earnings made while this plan is active, are paid out together at maturity.`
-              : `Your ${fmt(amountNum)} is locked for ${fmtDuration()}. Principal + ${fmt(totalProfit)} profit, plus any task earnings made while this plan is active, are paid out together at maturity.`}
+            {fmt(amountNum)} is locked as principal{autoMode ? ` (plus a ${fmt(autoModeFee)} one-time auto-mode fee, charged once)` : ""}.{" "}
+            {autoMode
+              ? `Your daily tasks complete automatically up to ${fmt(totalProfit)} target profit each cycle.`
+              : `Complete your daily tasks yourself to earn up to ${fmt(totalProfit)} target profit each cycle.`}
           </p>
         </div>
       </div>
@@ -2726,10 +3422,13 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   );
 }
 
-// ── Reinvest Modal — roll a matured payout into a new plan, no fresh payment ──
+// ── Reinvest Modal — roll a completed plan's returned principal into a new plan, no fresh payment ──
 function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSuccess, dark }) {
   const T = theme(dark);
-  const payoutAvailable = maturedInv.expected_total + (maturedInv.locked_task_earnings ?? 0);
+  // What's actually available is current_principal — the original amount
+  // plus anything folded in via reinvest_held_profit along the way.
+  // Monthly profit was already paid out cycle by cycle, not bundled here.
+  const payoutAvailable = maturedInv.current_principal ?? maturedInv.amount;
 
   // Default to the same tier they were in, if it's still active; else the highest plan they can afford
   const defaultPlan = plans.find(p => p.name === maturedInv.plan_name)
@@ -2749,10 +3448,10 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
   const handleSubmit = async () => {
     setErr("");
     if (!selectedPlan) return setErr("Pick a plan");
-    if (amountNum > payoutAvailable) return setErr("Amount exceeds your available matured balance");
+    if (amountNum > payoutAvailable) return setErr("Amount exceeds your available principal");
     setLoading(true);
     try {
-      await reinvestFromBalance(userId, selectedPlan.level, amountNum, selectedPlan.durationDays);
+      await reinvestFromBalance(userId, selectedPlan.level);
       await onSuccess();
     } catch (e) {
       setErr(e.message ?? "Reinvestment failed");
@@ -2768,7 +3467,7 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
             <div>
               <div style={{ fontSize:28, marginBottom:4 }}>🔁</div>
               <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>Reinvest</div>
-              <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>Using your matured balance — no new payment needed</div>
+              <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>Using your returned principal — no new payment needed</div>
             </div>
             <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
           </div>
@@ -2778,12 +3477,12 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
           {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
           <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:12, color:BRAND_DARK, marginBottom:16 }}>
-            💰 Matured payout available: <strong>{fmt(payoutAvailable)}</strong>
+            💰 Principal available to reinvest: <strong>{fmt(payoutAvailable)}</strong>
           </div>
 
           <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Plan</label>
           <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:14 }} value={planLevel} onChange={e => setPlanLevel(Number(e.target.value))}>
-            {plans.map(p => <option key={p.level} value={p.level}>{p.icon} {p.name} — {p.ratePercent}%/month ({fmt(p.amount)})</option>)}
+            {plans.map(p => <option key={p.level} value={p.level}>{p.icon} {p.name} — {fmt(p.amount)}</option>)}
           </select>
 
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
@@ -2791,7 +3490,7 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
               ["You reinvest", fmt(amountNum)],
               ["You earn", `+${fmt(totalProfit)}`],
               ["Term", fmtDuration()],
-              ["Monthly rate", `${selectedPlan?.ratePercent ?? 30}%`],
+              ["Tasks/day", String(selectedPlan?.dailyTasks ?? 0)],
             ].map(([lbl, val]) => (
               <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
@@ -2803,7 +3502,7 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
           <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient, opacity: amountValid ? 1 : 0.6 }} onClick={handleSubmit} disabled={loading || !amountValid}>
             {loading ? "Reinvesting..." : `Reinvest ${fmt(amountNum)} →`}
           </button>
-          {!amountValid && <p style={{ fontSize:11, color:"#E24B4A", textAlign:"center", marginTop:8 }}>This plan costs more than your matured payout</p>}
+          {!amountValid && <p style={{ fontSize:11, color:"#E24B4A", textAlign:"center", marginTop:8 }}>This plan costs more than your returned principal</p>}
         </div>
       </div>
     </div>
@@ -2891,16 +3590,82 @@ function ExtendModal({ investment: inv, userId, onClose, onSuccess, dark }) {
 }
 
 // ── Withdraw Modal ─────────────────────────────────────────────
-function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
-  const [amount, setAmount]   = useState("");
-  const [phone, setPhone]     = useState(profile?.phone ?? "");
-  const [method, setMethod]   = useState(detectMethod(profile?.phone));
-  const [loading, setLoading] = useState(false);
-  const [err, setErr]         = useState("");
+// Only referral commissions and earnings (task rewards + monthly plan
+// profit) can ever be cashed out. Principal is reinvest-only (see
+// ReinvestModal) and raw deposits aren't withdrawable at all — the
+// backend enforces this too (deduct_for_withdrawal rejects 'principal'
+// and 'deposits'), this is just keeping the UI from offering a path
+// that would fail server-side anyway.
+function WithdrawModal({ profile, settings, investments, userId, kycSubmission, onStartKyc, onClose, onSubmit, dark }) {
+  const referralBal = profile?.balance_referral ?? 0;
+  const earningsBal = profile?.balance_earnings ?? 0;
+  const kycStatus = profile?.kyc_status ?? kycSubmission?.status ?? "none";
+  const kycApproved = kycStatus === "approved";
+
+  const [bucket, setBucket]     = useState(earningsBal > 0 ? "earnings" : "referral");
+  const [amount, setAmount]     = useState("");
+  const [phone, setPhone]       = useState(normalizePhone(profile?.phone));
+  const [method, setMethod]     = useState(detectMethod(normalizePhone(profile?.phone)));
+  const [loading, setLoading]   = useState(false);
+  const [err, setErr]           = useState("");
+  const [pending, setPending]   = useState(null); // { amount, count, minAmount, have } or null
+  const [addingToPrincipal, setAddingToPrincipal] = useState(false);
   const T = theme(dark);
   const min = parseInt(settings.min_withdrawal ?? 1000);
   const max = parseInt(settings.max_withdrawal ?? 1000000);
-  const bal = profile?.balance ?? 0;
+  const bucketBal = bucket === "referral" ? referralBal : earningsBal;
+
+  // Only relevant when the user is actually trying to withdraw earnings —
+  // check whether any of their plans have profit sitting held on an unmet
+  // referral condition. If everything's clear (or they're withdrawing
+  // referral commissions instead), this stays null and shows nothing.
+  useEffect(() => {
+    let cancelled = false;
+    if (bucket !== "earnings" || !investments?.length) { setPending(null); return; }
+
+    const candidates = investments
+      .filter(i => i.status === "active" && (i.locked_task_earnings ?? 0) > 0)
+      .map(i => ({ inv: i, req: referralRequirementForCycle((i.cycle_number ?? 0) + 1) }))
+      .filter(c => c.req);
+
+    if (candidates.length === 0) { setPending(null); return; }
+
+    Promise.all(candidates.map(c => getQualifyingReferralCount(userId, c.req.minAmount)))
+      .then(counts => {
+        if (cancelled) return;
+        const unmet = candidates
+          .map((c, i) => ({ ...c, have: counts[i] }))
+          .filter(c => c.have < c.req.count);
+        if (unmet.length === 0) { setPending(null); return; }
+        // Surface the one needing the fewest additional referrals first —
+        // that's the most actionable thing to tell them.
+        unmet.sort((a, b) => (a.req.count - a.have) - (b.req.count - b.have));
+        const top = unmet[0];
+        setPending({
+          investmentId: top.inv.id,
+          amount: top.inv.locked_task_earnings,
+          count: top.req.count,
+          minAmount: top.req.minAmount,
+          have: top.have,
+          otherCount: unmet.length - 1,
+        });
+      })
+      .catch(() => { if (!cancelled) setPending(null); });
+
+    return () => { cancelled = true; };
+  }, [bucket, investments, userId]);
+
+  const handleAddToPrincipal = async () => {
+    if (!pending) return;
+    setAddingToPrincipal(true);
+    try {
+      await reinvestHeldProfit(userId, pending.investmentId);
+      setPending(null);
+    } catch (e) {
+      setErr(e.message ?? "Could not add to principal");
+    }
+    setAddingToPrincipal(false);
+  };
 
   const handlePhoneChange = (val) => { setPhone(val); setMethod(detectMethod(val)); };
 
@@ -2910,13 +3675,14 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
     // Withdrawal window: 7:00 AM – 7:00 PM EAT
     const now  = new Date();
     const hour = now.getHours(); // local device time (Uganda = UTC+3)
+    if (!kycApproved)      return setErr("Please verify your ID before withdrawing.");
     if (hour < 7 || hour >= 19) return setErr("Withdrawals are only processed between 7:00 AM and 7:00 PM. Try again during business hours.");
     if (!amt || amt < min) return setErr(`Minimum withdrawal is ${fmt(min)}`);
     if (amt > max)         return setErr(`Maximum is ${fmt(max)}`);
-    if (amt > bal)         return setErr("Insufficient balance");
+    if (amt > bucketBal)   return setErr(`Insufficient ${bucket} balance`);
     if (!phone)            return setErr("Enter your mobile money number");
     setLoading(true);
-    await onSubmit({ amount: amt, method, phone });
+    await onSubmit({ amount: amt, method, phone, bucket });
     setLoading(false);
   };
 
@@ -2927,9 +3693,70 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
           <div style={{ fontWeight:700, fontSize:18, color:T.text }}>Withdraw funds</div>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:T.textSub }}>×</button>
         </div>
-        <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:13, color:BRAND_DARK, marginBottom:18 }}>Balance: <strong>{fmt(bal)}</strong></div>
-        {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:4 }}>{err}</div>}
-        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:4 }}>Amount (UGX)</label>
+        {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+
+        {!kycApproved && (
+          <div style={{ background:"#FFF7E6", border:"1px solid #FCD9A0", borderRadius:14, padding:"18px 16px", textAlign:"center" }}>
+            <div style={{ fontSize:30, marginBottom:8 }}>🪪</div>
+            <div style={{ fontWeight:700, fontSize:14, color:"#854F0B", marginBottom:4 }}>
+              {kycStatus === "pending" ? "ID verification pending" : kycStatus === "rejected" ? "ID verification rejected" : "Verify your ID to withdraw"}
+            </div>
+            <div style={{ fontSize:12, color:"#a0611a", marginBottom:14, lineHeight:1.6 }}>
+              {kycStatus === "pending"
+                ? "We're reviewing your documents. This usually takes a few hours — you'll be notified here once approved."
+                : kycStatus === "rejected"
+                ? (kycSubmission?.rejection_reason ? `Reason: ${kycSubmission.rejection_reason}. Please resubmit clearer photos.` : "Your submission was rejected. Please resubmit clearer photos of your ID.")
+                : "For your security, we require a one-time ID verification before your first withdrawal."}
+            </div>
+            {kycStatus !== "pending" && (
+              <button style={{ background:"#854F0B", color:"white", border:"none", borderRadius:10, padding:"11px 22px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onStartKyc}>
+                {kycStatus === "rejected" ? "Resubmit ID →" : "Verify ID now →"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {kycApproved && <>
+        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Withdraw from</label>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
+          {[
+            ["earnings", "💰 Earnings", "Task rewards + monthly plan profit", earningsBal],
+            ["referral", "👥 Referral", "Commissions from your team", referralBal],
+          ].map(([key, label, desc, bal]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setBucket(key)}
+              style={{
+                textAlign:"left", padding:"12px 14px", borderRadius:12, cursor:"pointer",
+                border: bucket === key ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
+                background: bucket === key ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+              }}
+            >
+              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{label}</div>
+              <div style={{ fontSize:10, color:T.textSub, marginTop:2, lineHeight:1.4 }}>{desc}</div>
+              <div style={{ fontSize:13, fontWeight:700, color:BRAND_DARK, marginTop:6 }}>{fmt(bal)}</div>
+            </button>
+          ))}
+        </div>
+
+        {pending && (
+          <div style={{ background: dark ? "#142e20" : "#E1F5EE", borderRadius:10, padding:"10px 14px", marginBottom:16 }}>
+            <div style={{ fontSize:12, color:BRAND_DARK, marginBottom:8 }}>
+              🎯 You've also got <strong>{fmt(pending.amount)}</strong> from a plan still growing — invite {pending.count} referral{pending.count > 1 ? "s" : ""}{pending.minAmount > 0 ? ` with a plan ≥ ${fmt(pending.minAmount)}` : ""} to add it here too (you're at {pending.have} of {pending.count}){pending.otherCount > 0 ? `, plus ${pending.otherCount} more plan${pending.otherCount > 1 ? "s" : ""} in the same boat` : ""}.
+            </div>
+            <button
+              onClick={handleAddToPrincipal}
+              disabled={addingToPrincipal}
+              style={{ width:"100%", border:`0.5px solid ${T.inputBrd}`, borderRadius:8, padding:"8px 0", fontSize:12, fontWeight:700,
+                background:"transparent", color:BRAND_DARK, cursor: addingToPrincipal ? "default" : "pointer", opacity: addingToPrincipal ? 0.7 : 1 }}
+            >
+              {addingToPrincipal ? "Adding..." : "Prefer it sooner? Add to principal instead"}
+            </button>
+          </div>
+        )}
+
+        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Amount (UGX)</label>
         <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(min)}`} value={amount} onChange={e => setAmount(e.target.value)} />
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Method</label>
         <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
@@ -2941,7 +3768,110 @@ function WithdrawModal({ profile, settings, onClose, onSubmit, dark }) {
         <button style={{ ...S.primaryBtn, marginTop:14, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
           {loading ? "Submitting..." : "Request withdrawal →"}
         </button>
-        <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>💡 Withdrawals available 7:00 AM – 7:00 PM daily.</p>
+        <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>
+          💡 Withdrawals available 7:00 AM – 7:00 PM daily. Principal and deposits can't be withdrawn — reinvest them into a plan instead.
+        </p>
+        </>}
+      </div>
+    </div>
+  );
+}
+
+// ── KYC Modal ──────────────────────────────────────────────────
+// One-time ID verification: front + back of a national ID or
+// passport. Photos go to submitKyc() -> private 'kyc-documents'
+// storage bucket, and a kyc_submissions row is queued for admin
+// review (see AdminApp's KycTab -> approve_kyc/reject_kyc).
+function KycModal({ kycSubmission, onClose, onSubmit, dark }) {
+  const T = theme(dark);
+  const status = kycSubmission?.status ?? "none";
+  const [idType, setIdType] = useState(kycSubmission?.id_type ?? "national_id");
+  const [front, setFront]   = useState(null);
+  const [back, setBack]     = useState(null);
+  const [frontName, setFrontName] = useState("");
+  const [backName, setBackName]   = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const readFile = (file, setData, setName) => {
+    if (!file) return;
+    setName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setData(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = async () => {
+    setErr("");
+    if (!front || !back) return setErr("Please upload both the front and back of your ID");
+    setLoading(true);
+    try {
+      await onSubmit({ idType, front, back });
+    } catch (e) {
+      setErr(e.message ?? "Submission failed");
+      setLoading(false);
+    }
+  };
+
+  const UploadBox = ({ label, data, name, onPick }) => (
+    <div style={{ marginBottom:14 }}>
+      <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>{label}</label>
+      <PhotoUploadField data={data} name={name} onPick={onPick} dark={dark} compact />
+    </div>
+  );
+
+  // Already pending or approved — nothing to submit, just show status.
+  if (status === "pending" || status === "approved") {
+    return (
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"28px 20px 40px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
+          <div style={{ fontSize:40, marginBottom:10 }}>{status === "approved" ? "✅" : "⏳"}</div>
+          <div style={{ fontWeight:700, fontSize:16, color:T.text, marginBottom:6 }}>
+            {status === "approved" ? "Your ID is verified" : "Verification in progress"}
+          </div>
+          <div style={{ fontSize:13, color:T.textSub, marginBottom:20, lineHeight:1.6 }}>
+            {status === "approved" ? "You're all set — you can withdraw anytime." : "We're reviewing your documents. This usually takes a few hours."}
+          </div>
+          <button style={{ ...S.primaryBtn, padding:"13px 0" }} onClick={onClose}>Close</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"24px 20px 36px", width:"100%", maxWidth:480, maxHeight:"88vh", overflowY:"auto", animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+          <div style={{ fontWeight:700, fontSize:18, color:T.text }}>Verify your ID</div>
+          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:T.textSub }}>×</button>
+        </div>
+        <div style={{ fontSize:12, color:T.textSub, marginBottom:16, lineHeight:1.5 }}>
+          Required once before your first withdrawal. Your documents are stored securely and only reviewed by our team.
+        </div>
+
+        {status === "rejected" && (
+          <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:12, marginBottom:14 }}>
+            Your last submission was rejected{kycSubmission?.rejection_reason ? `: ${kycSubmission.rejection_reason}` : "."} Please try again with clearer photos.
+          </div>
+        )}
+        {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+
+        <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>ID type</label>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
+          {[["national_id","🪪 National ID"],["passport","📔 Passport"]].map(([key,label]) => (
+            <button key={key} onClick={() => setIdType(key)}
+              style={{ padding:"12px 10px", borderRadius:10, border:`1.5px solid ${idType === key ? BRAND : T.border}`, background: idType === key ? "#E1F5EE" : T.bg, color: idType === key ? BRAND_DARK : T.text, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <UploadBox label="Front of ID" data={front} name={frontName} onPick={f => readFile(f, setFront, setFrontName)} />
+        <UploadBox label="Back of ID" data={back} name={backName} onPick={f => readFile(f, setBack, setBackName)} />
+
+        <button style={{ ...S.primaryBtn, marginTop:6, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
+          {loading ? "Submitting..." : "Submit for review →"}
+        </button>
       </div>
     </div>
   );

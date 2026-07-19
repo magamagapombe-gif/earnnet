@@ -34,9 +34,17 @@ const detectMethod = (phone) => {
   // MTN Uganda: 077x, 078x, 076x, 031x, 039x (default)
   return "mtn";
 };
-const BRAND      = "#1D9E75";
-const BRAND_DARK = "#0F6E56";
-const BG_DARK    = "#0F2D22";
+// ── Design tokens — professional, restrained palette ────────────
+// Moved off the bright-gradient consumer look toward a flatter,
+// finance-dashboard register: one confident brand color, ink-level
+// neutrals, and color used to mark status rather than decorate.
+const BRAND      = "#0F6E56"; // primary actions, active states
+const BRAND_DARK = "#0B5445"; // headers, emphasis panels
+const BRAND_SOFT = "#E7F2EE"; // light tint for badges/backgrounds
+const BG_DARK    = "#0B1F17";
+const INK        = "#12211B";
+const GOLD       = "#96721E";  // premium tier accent (muted, was #B8860B)
+const DANGER     = "#B3453F";  // muted red, was #E24B4A
 
 // ── Vault Plans — fixed 16-tier ladder ────────────────────────
 // Every plan fully determines its own amount, daily task count, and
@@ -113,7 +121,7 @@ const TIER_BANDS = [
   { min:14, label:"👑 Legend",   color:"#B8860B", gradient:"linear-gradient(135deg,#3D1C00,#B8860B,#FFD700)", badgeText:"#7A5000" }, // Icon → Legendary
   { min:11, label:"💎 Platinum", color:"#7B61FF", gradient:"linear-gradient(135deg,#4B0082,#7B61FF)",          badgeText:"#7B61FF" }, // Titan → Emperor
   { min:5,  label:"🥇 Gold",     color:"#185FA5", gradient:"linear-gradient(135deg,#185FA5,#4FA3E0)",          badgeText:"#185FA5" }, // Rising → Pioneer
-  { min:1,  label:"🥈 Silver",   color:"#1D9E75", gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)",          badgeText:BRAND_DARK }, // Beginner → Sprout
+  { min:1,  label:"🥈 Silver",   color:BRAND, gradient:"linear-gradient(135deg,#1a3d2b,#1D9E75)",          badgeText:BRAND_DARK }, // Beginner → Sprout
 ];
 const tierStyle = (level) => (TIER_BANDS.find(b => level >= b.min) ?? TIER_BANDS[TIER_BANDS.length - 1]);
 
@@ -275,19 +283,19 @@ function useDepositPolling(userId, onSuccess, customCheck) {
 // ── Theme tokens ───────────────────────────────────────────────
 function theme(dark) {
   return {
-    bg:        dark ? "#0F2D22"  : "#f5f6f8",
-    card:      dark ? "#1a3d2b"  : "#ffffff",
-    border:    dark ? "#2a5040"  : "#eeeeee",
-    text:      dark ? "#e8f5f0"  : "#111111",
-    textSub:   dark ? "#7db89a"  : "#888888",
-    inputBg:   dark ? "#142e20"  : "#fafafa",
-    inputBrd:  dark ? "#2a5040"  : "#dddddd",
-    navBg:     dark ? "#0e2b1f"  : "#ffffff",
-    headerBg:  dark ? "#0e2b1f"  : "#ffffff",
-    chipBg:    dark ? "#1a3d2b"  : "#ffffff",
-    chipBrd:   dark ? "#2a5040"  : "#dddddd",
-    notifBg:   dark ? "#142e20"  : "#ffffff",
-    notifHover:dark ? "#1a3d2b"  : "#f8faf9",
+    bg:        dark ? "#0B1F17"  : "#F6F7F6",
+    card:      dark ? "#12261D"  : "#ffffff",
+    border:    dark ? "#22392F"  : "#E4E7E5",
+    text:      dark ? "#E8EFEA"  : "#12211B",
+    textSub:   dark ? "#84998E"  : "#67746D",
+    inputBg:   dark ? "#0F2018"  : "#FAFBFA",
+    inputBrd:  dark ? "#22392F"  : "#DBDFDC",
+    navBg:     dark ? "#0F2018"  : "#ffffff",
+    headerBg:  dark ? "#0F2018"  : "#ffffff",
+    chipBg:    dark ? "#12261D"  : "#ffffff",
+    chipBrd:   dark ? "#22392F"  : "#DBDFDC",
+    notifBg:   dark ? "#0F2018"  : "#ffffff",
+    notifHover:dark ? "#12261D"  : "#F7F8F7",
   };
 }
 
@@ -322,7 +330,7 @@ class ErrorBoundary extends Component {
           </div>
           <button
             onClick={() => window.location.reload()}
-            style={{ background:"#1D9E75", color:"white", border:"none", borderRadius:10, padding:"12px 28px", fontSize:14, fontWeight:700, cursor:"pointer" }}
+            style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"12px 28px", fontSize:14, fontWeight:700, cursor:"pointer" }}
           >
             Reload
           </button>
@@ -434,7 +442,7 @@ function LiveActivityTicker({ dark }) {
         <div style={{ fontSize:12, color:T.textSub, marginBottom:2 }}>🟢 Live activity</div>
         <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{ev.msg}</div>
       </div>
-      <div style={{ width:8, height:8, borderRadius:"50%", background:"#1D9E75", flexShrink:0, animation:"pulse 1.5s infinite" }} />
+      <div style={{ width:8, height:8, borderRadius:"50%", background:BRAND, flexShrink:0, animation:"pulse 1.5s infinite" }} />
       <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(1.4)}}`}</style>
     </div>
   );
@@ -933,35 +941,35 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   return (
     <div style={{ display:"flex", flexDirection:"column", minHeight:"100vh", background:T.bg, maxWidth:480, margin:"0 auto", transition:"background 0.3s" }}>
       {/* Header */}
-      <header style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 16px", background:T.headerBg, borderBottom:`0.5px solid ${T.border}`, position:"sticky", top:0, zIndex:50 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <div style={{ ...S.logoMark, width:32, height:32, fontSize:16 }}>E</div>
-          <span style={{ fontWeight:700, fontSize:18, color:T.text }}>Earn<span style={{ color:BRAND }}>Net</span></span>
+      <header style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"13px 16px", background:T.headerBg, borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:50 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+          <div style={{ ...S.logoMark, width:30, height:30, fontSize:14 }}>E</div>
+          <span style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:16, color:T.text, letterSpacing:"-0.01em" }}>EarnNet</span>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
           {!profile?.activated && (
             <button onClick={() => setActivateModal(true)}
-              style={{ background:"#FAEEDA", color:"#854F0B", border:"none", borderRadius:20, padding:"4px 12px", fontSize:11, fontWeight:600, cursor:"pointer" }}>
-              ⚡ Activate
+              style={{ background:"transparent", color:GOLD, border:`1px solid ${GOLD}`, borderRadius:8, padding:"5px 11px", fontSize:11, fontWeight:600, cursor:"pointer" }}>
+              Activate account
             </button>
           )}
           {/* Dark mode toggle */}
-          <button onClick={toggleDark} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, width:32, height:32, cursor:"pointer", fontSize:15, color:T.text, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            {dark ? "☀️" : "🌙"}
+          <button onClick={toggleDark} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:8, width:30, height:30, cursor:"pointer", fontSize:14, color:T.text, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {dark ? "☀" : "☾"}
           </button>
           {/* Notifications bell */}
           <div style={{ position:"relative" }}>
-            <button onClick={() => setNotifOpen(o => !o)} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, width:32, height:32, cursor:"pointer", fontSize:16, color:T.text, display:"flex", alignItems:"center", justifyContent:"center", position:"relative" }}>
-              🔔
+            <button onClick={() => setNotifOpen(o => !o)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:8, width:30, height:30, cursor:"pointer", fontSize:14, color:T.text, display:"flex", alignItems:"center", justifyContent:"center", position:"relative" }}>
+              ◔
               {unreadCount > 0 && (
-                <span style={{ position:"absolute", top:-4, right:-4, background:"#E24B4A", color:"white", fontSize:9, padding:"1px 5px", borderRadius:10, fontWeight:700 }}>
+                <span style={{ position:"absolute", top:-4, right:-4, background:DANGER, color:"white", fontSize:9, padding:"1px 5px", borderRadius:10, fontWeight:700 }}>
                   {Math.min(unreadCount, 9)}
                 </span>
               )}
             </button>
             {notifOpen && (
-              <div style={{ position:"absolute", right:0, top:"calc(100% + 8px)", width:280, background:T.notifBg, border:`0.5px solid ${T.border}`, borderRadius:16, boxShadow:"0 8px 24px rgba(0,0,0,0.15)", zIndex:200, overflow:"hidden" }}>
-                <div style={{ padding:"12px 14px 10px", borderBottom:`0.5px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ position:"absolute", right:0, top:"calc(100% + 8px)", width:280, background:T.notifBg, border:`1px solid ${T.border}`, borderRadius:12, boxShadow:"0 8px 20px rgba(0,0,0,0.12)", zIndex:200, overflow:"hidden" }}>
+                <div style={{ padding:"12px 14px 10px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <span style={{ fontWeight:700, fontSize:13, color:T.text }}>Recent activity</span>
                   <div style={{ display:"flex", gap:10, alignItems:"center" }}>
                     <button onClick={markAllNotifsRead} disabled={unreadCount === 0}
@@ -974,7 +982,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
                         else { setConfirmClearNotifs(true); setTimeout(() => setConfirmClearNotifs(false), 3000); }
                       }}
                       disabled={notifications.length === 0}
-                      style={{ background:"none", border:"none", color: notifications.length === 0 ? T.textSub : "#E24B4A", fontSize:11, fontWeight:600, cursor: notifications.length === 0 ? "default" : "pointer", padding:0 }}>
+                      style={{ background:"none", border:"none", color: notifications.length === 0 ? T.textSub : DANGER, fontSize:11, fontWeight:600, cursor: notifications.length === 0 ? "default" : "pointer", padding:0 }}>
                       {confirmClearNotifs ? "Tap to confirm" : "Clear all"}
                     </button>
                   </div>
@@ -992,7 +1000,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
                               <div style={{ fontSize:10, color:T.textSub }}>{n.time}</div>
                             </div>
                           </div>
-                          <div style={{ fontSize:12, fontWeight:700, color: n.amount > 0 ? BRAND : "#E24B4A", whiteSpace:"nowrap" }}>
+                          <div style={{ fontSize:12, fontWeight:700, color: n.amount > 0 ? BRAND : DANGER, whiteSpace:"nowrap" }}>
                             {n.amount > 0 ? "+" : ""}{fmt(n.amount)}
                           </div>
                         </div>
@@ -1022,15 +1030,16 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       </main>
 
       {/* Bottom nav */}
-      <nav style={{ display:"flex", background:T.navBg, borderTop:`0.5px solid ${T.border}`, position:"sticky", bottom:0, zIndex:50 }}>
+      <nav style={{ display:"flex", background:T.navBg, borderTop:`1px solid ${T.border}`, position:"sticky", bottom:0, zIndex:50 }}>
         {tabs.map(t => {
           const active = tab === t.id;
           return (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{ position:"relative", flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"8px 0 9px", background:"none", border:"none", color: active ? BRAND : T.textSub, cursor:"pointer", transition:"color 0.15s" }}>
-              {active && <span style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:24, height:3, borderRadius:"0 0 3px 3px", background:BRAND }} />}
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ position:"relative", flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:"9px 0 9px", background:"none", border:"none", color: active ? BRAND : T.textSub, cursor:"pointer", transition:"color 0.15s" }}>
+              {active && <span style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:20, height:2, borderRadius:"0 0 2px 2px", background:BRAND }} />}
               <span style={{
-                fontSize:20, lineHeight:1, width:36, height:26, display:"flex", alignItems:"center", justifyContent:"center",
-                borderRadius:10, background: active ? (dark ? "rgba(29,158,117,0.22)" : "#E1F5EE") : "transparent",
+                fontSize:18, lineHeight:1, width:32, height:24, display:"flex", alignItems:"center", justifyContent:"center",
+                borderRadius:8, background: active ? BRAND_SOFT : "transparent",
+                opacity: active ? 1 : 0.75,
                 transition:"background 0.15s"
               }}>{t.icon}</span>
               <span style={{ fontSize:10, marginTop:1, fontWeight: active ? 700 : 500 }}>{t.label}</span>
@@ -1045,7 +1054,7 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
       {investModal   && <InvestModal   plan={investModal} profile={profile} userId={uid} investments={investments} onClose={() => setInvestModal(null)} onSuccess={async () => { setInvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Investment activated! Watch your profits grow 🌱"); }} dark={dark} />}
       {reinvestModal && <ReinvestModal plan={reinvestModal} profile={profile} userId={uid} plans={VAULT_PLANS} onClose={() => setReinvestModal(null)} onSuccess={async () => { setReinvestModal(null); await Promise.all([loadInvestments(), refreshProfile()]); showToast("Reinvested! Your new plan is growing 🌱"); }} dark={dark} />}
       {kycModal      && <KycModal      kycSubmission={kycSubmission} onClose={() => setKycModal(false)} onSubmit={handleKycSubmit} dark={dark} />}
-      {toast && <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background: toast.type === "error" ? "#E24B4A" : BRAND, color:"white", padding:"12px 24px", borderRadius:14, fontSize:13, fontWeight:500, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.25)", animation:"slideUp 0.3s ease", whiteSpace:"nowrap" }}>{toast.msg}</div>}
+      {toast && <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background: toast.type === "error" ? DANGER : BRAND, color:"white", padding:"12px 24px", borderRadius:14, fontSize:13, fontWeight:500, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.25)", animation:"slideUp 0.3s ease", whiteSpace:"nowrap" }}>{toast.msg}</div>}
 
       {/* Close notif on outside click */}
       {notifOpen && <div style={{ position:"fixed", inset:0, zIndex:150 }} onClick={() => setNotifOpen(false)} />}
@@ -1100,12 +1109,11 @@ function ActivateModal({ settings, userId, currentBalance, profile, onClose, onS
     return (
       <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
         <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
-          <div style={{ fontSize:64, marginBottom:16 }}>⚡</div>
-          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>Account activated!</div>
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>Account activated</div>
           <div style={{ fontSize:14, color:T.textSub, marginBottom:28, lineHeight:1.7 }}>
             You can now complete tasks, earn commissions, and withdraw your earnings.
           </div>
-          <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px" }} onClick={handleClose}>Start earning →</button>
+          <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px" }} onClick={handleClose}>Start earning</button>
         </div>
       </div>
     );
@@ -1151,7 +1159,7 @@ function ActivateModal({ settings, userId, currentBalance, profile, onClose, onS
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Mobile money number</label>
         <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
         <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", marginTop:6, fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5" }}>
-          📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
+          {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
         </div>
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Your mobile money number</label>
         <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
@@ -1224,7 +1232,7 @@ function DepositModal({ settings, userId, currentBalance, profile, onClose, onSu
             New balance: {fmt(newBalance)}
           </div>
           <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px" }} onClick={handleClose}>
-            Done ✓
+            Done
           </button>
         </div>
       </div>
@@ -1267,7 +1275,7 @@ function DepositModal({ settings, userId, currentBalance, profile, onClose, onSu
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
       <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"24px 20px 36px", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-          <div style={{ fontWeight:700, fontSize:18, color:T.text }}>💳 Deposit funds</div>
+          <div style={{ fontWeight:700, fontSize:16, fontFamily:"'Sora',sans-serif", color:T.text }}>Deposit funds</div>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:T.textSub }}>×</button>
         </div>
         {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:4 }}>{err}</div>}
@@ -1302,13 +1310,13 @@ function DepositModal({ settings, userId, currentBalance, profile, onClose, onSu
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Mobile money number</label>
         <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
         <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", marginTop:6, marginBottom:8, fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5" }}>
-          📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
+          {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
         </div>
         <div style={{ background:"#E6F1FB", borderRadius:10, padding:"10px 14px", fontSize:12, color:"#185FA5", margin:"8px 0 14px" }}>
-          ℹ️ You will receive a payment prompt on your phone. Enter your PIN to complete the deposit instantly.
+          You will receive a payment prompt on your phone. Enter your PIN to complete the deposit instantly.
         </div>
         <button style={{ ...S.primaryBtn, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
-          {loading ? "Sending prompt..." : `Deposit ${fmt(amt || minDeposit)} →`}
+          {loading ? "Sending prompt..." : `Deposit ${fmt(amt || minDeposit)}`}
         </button>
       </div>
     </div>
@@ -1561,18 +1569,18 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         {phase === "watching" && (
           <div style={{ background:T.card, borderRadius:16, padding:"20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
             <div style={{ fontSize:11, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.08em",
-              color: isPaused ? "#E24B4A" : T.textSub }}>
+              color: isPaused ? DANGER : T.textSub }}>
               {isPaused ? "⏸ PAUSED — RESUME VIDEO TO CONTINUE" : timerRunning ? "▶ WATCHING — TIME REMAINING" : "⏳ STARTING VIDEO…"}
             </div>
             <div style={{ fontFamily:"'Sora',sans-serif", fontSize:56, fontWeight:700, letterSpacing:3,
-              color: isPaused ? "#E24B4A" : timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+              color: isPaused ? DANGER : timeLeft < 10 ? DANGER : BRAND_DARK }}>
               {fmtTime(timeLeft)}
             </div>
             <div style={{ height:10, background: dark ? "#2a5040" : "#eee", borderRadius:5, marginTop:16 }}>
-              <div style={{ height:"100%", width:`${pct}%`, background: isPaused ? "#E24B4A" : BRAND, borderRadius:5, transition:"width 0.25s linear" }} />
+              <div style={{ height:"100%", width:`${pct}%`, background: isPaused ? DANGER : BRAND, borderRadius:5, transition:"width 0.25s linear" }} />
             </div>
             <div style={{ fontSize:12, marginTop:10, fontWeight: isPaused ? 700 : 400,
-              color: isPaused ? "#E24B4A" : T.textSub }}>
+              color: isPaused ? DANGER : T.textSub }}>
               {isPaused
                 ? "⚠️ Timer paused — resume the video to continue earning"
                 : "Timer runs while video plays ✓"}
@@ -1610,7 +1618,7 @@ function YoutubeWatchTask({ task: t, profile, onBack, onComplete, dark }) {
         )}
         {phase === "watching" && (
           <div style={{ textAlign:"center", padding:"8px 0" }}>
-            <div style={{ fontSize:13, fontWeight: isPaused ? 700 : 400, color: isPaused ? "#E24B4A" : T.textSub }}>
+            <div style={{ fontSize:13, fontWeight: isPaused ? 700 : 400, color: isPaused ? DANGER : T.textSub }}>
               {isPaused ? "⏸ Resume the video to continue earning" : "▶ Keep watching — do not pause or skip"}
             </div>
           </div>
@@ -1700,7 +1708,7 @@ function YoutubeSubscribeTask({ task: t, profile, onBack, onComplete, dark }) {
           <div style={{ background:T.card, borderRadius:16, padding:"32px 20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
             <div style={{ fontSize:48, marginBottom:12 }}>📺</div>
             <div style={{ fontSize:11, color:T.textSub, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.08em" }}>Verifying your subscription</div>
-            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:52, fontWeight:700, color: timer.timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:52, fontWeight:700, color: timer.timeLeft < 10 ? DANGER : BRAND_DARK }}>
               {timer.display}
             </div>
             <div style={{ height:8, background: dark ? "#2a5040" : "#eee", borderRadius:4, marginTop:16 }}>
@@ -1861,7 +1869,7 @@ function TiktokTask({ task: t, profile, onBack, onComplete, dark }) {
         {phase === "timing" && (
           <div style={{ background:T.card, borderRadius:16, padding:"24px 20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
             <div style={{ fontSize:11, color:T.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.08em" }}>Verifying action</div>
-            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:48, fontWeight:700, color: timer.timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:48, fontWeight:700, color: timer.timeLeft < 10 ? DANGER : BRAND_DARK }}>
               {timer.display}
             </div>
             <div style={{ fontSize:12, color:T.textSub, marginTop:8 }}>Complete the {actionLabel.toLowerCase()} on TikTok then come back</div>
@@ -1999,7 +2007,7 @@ function WebsiteVisitTask({ task: t, profile, onBack, onComplete, dark }) {
           <div style={{ background:T.card, borderRadius:16, padding:"32px 20px", marginBottom:14, textAlign:"center", boxShadow:"0 4px 16px rgba(0,0,0,0.08)" }}>
             <div style={{ fontSize:48, marginBottom:12 }}>🌐</div>
             <div style={{ fontSize:11, color:T.textSub, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.08em" }}>Verifying your visit</div>
-            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:52, fontWeight:700, color: timer.timeLeft < 10 ? "#E24B4A" : BRAND_DARK }}>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:52, fontWeight:700, color: timer.timeLeft < 10 ? DANGER : BRAND_DARK }}>
               {timer.display}
             </div>
             <div style={{ height:8, background: dark ? "#2a5040" : "#eee", borderRadius:4, marginTop:16 }}>
@@ -2374,7 +2382,7 @@ function TaskStatBar({ task: t, dark }) {
   return (
     <div style={{ background:T.card, borderRadius:16, padding:"18px 20px", boxShadow:"0 4px 16px rgba(0,0,0,0.08)", marginBottom:14 }}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, textAlign:"center", marginBottom:12 }}>
-        {[["REWARD",fmt(t.reward),BRAND_DARK,"'Sora',sans-serif",20],["TIME",t.time_est??"~5 min",T.text,"inherit",15],["SPOTS LEFT",spotsLeft,spotsLeft<20?"#E24B4A":T.text,"inherit",15]].map(([lbl,val,tc,ff,fs]) => (
+        {[["REWARD",fmt(t.reward),BRAND_DARK,"'Sora',sans-serif",20],["TIME",t.time_est??"~5 min",T.text,"inherit",15],["SPOTS LEFT",spotsLeft,spotsLeft<20?DANGER:T.text,"inherit",15]].map(([lbl,val,tc,ff,fs]) => (
           <div key={lbl}>
             <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
             <div style={{ fontFamily:ff, fontWeight:700, fontSize:fs, color:tc }}>{val}</div>
@@ -2385,7 +2393,7 @@ function TaskStatBar({ task: t, dark }) {
         <span>Task progress</span><span>{t.completions??0} / {t.limit_count??"∞"}</span>
       </div>
       <div style={{ height:6, background: dark ? "#2a5040" : "#eee", borderRadius:3 }}>
-        <div style={{ height:"100%", width:`${pct}%`, background:pct>80?"#E24B4A":BRAND, borderRadius:3, transition:"width 0.5s ease" }} />
+        <div style={{ height:"100%", width:`${pct}%`, background:pct>80?DANGER:BRAND, borderRadius:3, transition:"width 0.5s ease" }} />
       </div>
     </div>
   );
@@ -2470,32 +2478,32 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
       {profile?.activated && !kycApproved && kycStatus !== "pending" && (
-        <div style={{ margin:"12px 16px 0", background:"linear-gradient(135deg,#FFF7E6,#fef3e2)", borderRadius:14, padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onStartKyc}>
+        <div style={{ margin:"12px 16px 0", background:T.card, border:`1px solid ${GOLD}`, borderRadius:10, padding:"12px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onStartKyc}>
           <div>
-            <div style={{ fontWeight:700, fontSize:14, color:"#854F0B" }}>🪪 Verify your ID</div>
-            <div style={{ fontSize:12, color:"#a0611a", marginTop:2 }}>Required before your first withdrawal</div>
+            <div style={{ fontWeight:600, fontSize:13, color:T.text }}>Verify your ID</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Required before your first withdrawal</div>
           </div>
-          <button style={{ background:"#854F0B", color:"white", border:"none", borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>Verify →</button>
+          <button style={{ background:GOLD, color:"white", border:"none", borderRadius:7, padding:"6px 12px", fontSize:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>Verify</button>
         </div>
       )}
       {!profile?.activated && (
-        <div style={{ margin:"12px 16px 0", background:`linear-gradient(135deg,#FAEEDA,#fef3e2)`, borderRadius:14, padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onActivate}>
+        <div style={{ margin:"12px 16px 0", background:T.card, border:`1px solid ${GOLD}`, borderRadius:10, padding:"12px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }} onClick={onActivate}>
           <div>
-            <div style={{ fontWeight:700, fontSize:14, color:"#854F0B" }}>⚡ Activate to earn</div>
-            <div style={{ fontSize:12, color:"#a0611a", marginTop:2 }}>One-time fee · Unlock all tasks</div>
+            <div style={{ fontWeight:600, fontSize:13, color:T.text }}>Activate to start earning</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>One-time fee · unlocks all tasks</div>
           </div>
-          <button style={{ background:"#854F0B", color:"white", border:"none", borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer" }}>Activate →</button>
+          <button style={{ background:GOLD, color:"white", border:"none", borderRadius:7, padding:"6px 12px", fontSize:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>Activate</button>
         </div>
       )}
 
-      <div style={{ background:`linear-gradient(135deg,${BG_DARK} 0%,${BRAND_DARK} 100%)`, color:"white", margin: profile?.activated ? 16 : "12px 16px 16px", borderRadius:20, padding:"24px 22px", boxShadow:"0 8px 32px rgba(15,46,34,0.35)" }}>
-        <div style={{ fontSize:12, opacity:0.8, marginBottom:6 }}>Your balance</div>
-        <div style={{ fontSize:40, fontWeight:700, fontFamily:"'Sora',sans-serif", letterSpacing:-1 }}>{fmt(profile?.balance)}</div>
-        <div style={{ fontSize:12, opacity:0.7, marginTop:4 }}>Total earned: {fmt(profile?.total_earned)}</div>
-        <div style={{ display:"flex", gap:10, marginTop:20, flexWrap:"wrap" }}>
-          <button style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onWithdraw}>Withdraw 💸</button>
-          <button style={{ background:"rgba(255,255,255,0.2)", color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onDeposit}>Deposit 💳</button>
-          <button style={{ background:"rgba(255,255,255,0.15)", color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onGoTasks}>Earn →</button>
+      <div style={{ background:BRAND_DARK, color:"white", margin: profile?.activated ? 16 : "12px 16px 16px", borderRadius:12, padding:"20px 20px", boxShadow:"none" }}>
+        <div style={{ fontSize:12, opacity:0.75, marginBottom:6 }}>Your balance</div>
+        <div style={{ fontSize:36, fontWeight:700, fontFamily:"'Sora',sans-serif", letterSpacing:"-0.02em" }}>{fmt(profile?.balance)}</div>
+        <div style={{ fontSize:12, opacity:0.65, marginTop:4 }}>Total earned: {fmt(profile?.total_earned)}</div>
+        <div style={{ display:"flex", gap:8, marginTop:18, flexWrap:"wrap" }}>
+          <button style={{ background:BRAND, color:"white", border:"none", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onWithdraw}>Withdraw</button>
+          <button style={{ background:"rgba(255,255,255,0.14)", color:"white", border:"1px solid rgba(255,255,255,0.25)", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onDeposit}>Deposit</button>
+          <button style={{ background:"transparent", color:"white", border:"1px solid rgba(255,255,255,0.25)", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onGoTasks}>Earn →</button>
         </div>
       </div>
 
@@ -2503,26 +2511,23 @@ function HomeTab({ profile, settings, kycSubmission, onStartKyc, onGoTasks, onWi
       <EarningsChart txns={txns} dark={dark} />
 
       {/* Grow teaser */}
-      <div style={{ background:`linear-gradient(135deg,${BG_DARK},#1a4030)`, borderRadius:16, margin:"0 16px 12px", padding:"16px 18px", cursor:"pointer", boxShadow:"0 4px 16px rgba(15,46,34,0.3)" }} onClick={onGoGrow}>
+      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, margin:"0 16px 12px", padding:"14px 16px", cursor:"pointer", boxShadow:"none" }} onClick={onGoGrow}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
-            <div style={{ fontWeight:700, fontSize:14, color:"white" }}>🌱 EarnNet Grow</div>
-            <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", marginTop:3 }}>
-              {tierInfo ? `${tierInfo.label} member` : "Invest & earn up to 10% return"}
+            <div style={{ fontWeight:600, fontSize:14, color:T.text }}>EarnNet Grow</div>
+            <div style={{ fontSize:12, color:T.textSub, marginTop:3 }}>
+              {tierInfo ? `${tierInfo.label} member` : "Invest in a Vault Plan for monthly returns"}
             </div>
           </div>
-          <div style={{ background:BRAND, color:"white", borderRadius:10, padding:"7px 14px", fontSize:12, fontWeight:600 }}>Invest →</div>
+          <div style={{ background:BRAND_SOFT, color:BRAND_DARK, borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, whiteSpace:"nowrap" }}>Invest →</div>
         </div>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, margin:"0 16px 16px" }}>
-        {[{ label:"Tasks done", value:profile?.tasks_done ?? 0, icon:"✅" },{ label:"Referrals", value:referrals?.length ?? 0, icon:"👥" }].map(s => (
-          <div key={s.label} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:0, display:"flex", alignItems:"center", gap:12, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
-            <span style={{ fontSize:28 }}>{s.icon}</span>
-            <div>
-              <div style={{ fontWeight:700, fontSize:22, fontFamily:"'Sora',sans-serif", color:T.text }}>{s.value}</div>
-              <div style={{ fontSize:11, color:T.textSub }}>{s.label}</div>
-            </div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, margin:"0 16px 16px" }}>
+        {[{ label:"Tasks done", value:profile?.tasks_done ?? 0 },{ label:"Referrals", value:referrals?.length ?? 0 }].map(s => (
+          <div key={s.label} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"14px 16px", margin:0, boxShadow:"none" }}>
+            <div style={{ fontWeight:700, fontSize:22, fontFamily:"'Sora',sans-serif", color:T.text }}>{s.value}</div>
+            <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{s.label}</div>
           </div>
         ))}
       </div>
@@ -2553,7 +2558,7 @@ function TasksTab({ tasks, loading, onComplete, onRefresh, onSelectTask, investm
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:24, textAlign:"left" }}>
           {[["🥈 Silver plans","More tasks/day · reward boost"],["🥇 Gold plans","Even more tasks · bigger boost"],["💎 Platinum plans","High daily limit · strong boost"],["👑 Legend plans","Unlimited tasks · top boost"]].map(([name,desc]) => (
-            <div key={name} style={{ background:T.card, borderRadius:12, padding:"12px 14px", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
+            <div key={name} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"11px 13px", boxShadow:"none" }}>
               <div style={{ fontWeight:700, fontSize:13, color:T.text, marginBottom:4 }}>{name}</div>
               <div style={{ fontSize:11, color:T.textSub }}>{desc}</div>
             </div>
@@ -2661,9 +2666,9 @@ function TaskCard({ task: t, onSelect, compact, dark }) {
   if (isLike) {
     return (
       <div
-        style={{ background:T.card, borderRadius:18, margin: compact ? "0 0 12px" : "0 16px 14px",
-          boxShadow:"0 4px 16px rgba(0,0,0,0.09)", cursor:"pointer", overflow:"hidden",
-          border:`0.5px solid ${T.border}` }}
+        style={{ background:T.card, borderRadius:12, margin: compact ? "0 0 12px" : "0 16px 12px",
+          boxShadow:"none", cursor:"pointer", overflow:"hidden",
+          border:`1px solid ${T.border}` }}
         onClick={onSelect}
       >
         {/* Cover image */}
@@ -2686,7 +2691,7 @@ function TaskCard({ task: t, onSelect, compact, dark }) {
           {/* Spots badge */}
           {spotsLeft > 0 && spotsLeft < 20 && (
             <div style={{ position:"absolute", top:10, right:10 }}>
-              <span style={{ background:"#FAECE7", color:"#E24B4A", fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>⚡ {spotsLeft} left</span>
+              <span style={{ background:"#FAECE7", color:DANGER, fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:20 }}>⚡ {spotsLeft} left</span>
             </div>
           )}
           {/* Song vinyl icon */}
@@ -2721,13 +2726,13 @@ function TaskCard({ task: t, onSelect, compact, dark }) {
 
   // ── Standard task card ──
   return (
-    <div style={{ background:T.card, borderRadius:16, padding:"14px 16px", margin: compact ? "0 0 10px" : "0 16px 12px", boxShadow:"0 2px 8px rgba(0,0,0,0.07)", cursor:"pointer", border:`0.5px solid ${T.border}` }} onClick={onSelect}>
+    <div style={{ background:T.card, borderRadius:12, padding:"13px 15px", margin: compact ? "0 0 8px" : "0 16px 10px", boxShadow:"none", cursor:"pointer", border:`1px solid ${T.border}` }} onClick={onSelect}>
       <div style={{ display:"flex", alignItems:"center", gap:12 }}>
         <div style={{ width:48, height:48, borderRadius:13, background:t.color ?? "#E1F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, flexShrink:0 }}>{t.icon ?? "📋"}</div>
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
             <span style={{ background:meta.bg, color:meta.tc, fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:20 }}>{meta.label}</span>
-            {spotsLeft < 20 && spotsLeft > 0 && <span style={{ background:"#FAECE7", color:"#E24B4A", fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:20 }}>⚡ {spotsLeft} left</span>}
+            {spotsLeft < 20 && spotsLeft > 0 && <span style={{ background:"#FAECE7", color:DANGER, fontSize:10, fontWeight:600, padding:"2px 7px", borderRadius:20 }}>⚡ {spotsLeft} left</span>}
           </div>
           <div style={{ fontWeight:600, fontSize:14, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.title}</div>
           <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{t.business}</div>
@@ -2769,13 +2774,13 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
-      <div style={{ background:`linear-gradient(135deg,${BG_DARK} 0%,${BRAND_DARK} 100%)`, color:"white", margin:16, borderRadius:20, padding:"24px 22px", boxShadow:"0 8px 32px rgba(15,46,34,0.35)" }}>
+      <div style={{ background:BRAND_DARK, color:"white", margin:16, borderRadius:12, padding:"20px 20px", boxShadow:"none" }}>
         <div style={{ fontSize:12, opacity:0.8 }}>Available balance</div>
         <div style={{ fontSize:36, fontWeight:700, fontFamily:"'Sora',sans-serif", margin:"8px 0 4px" }}>{fmt(profile?.balance)}</div>
         <div style={{ fontSize:11, opacity:0.7 }}>Min withdrawal: {fmt(minW)}</div>
-        <div style={{ display:"flex", gap:10, marginTop:16 }}>
-          <button style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onWithdraw}>Withdraw 💸</button>
-          <button style={{ background:"rgba(255,255,255,0.2)", color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onDeposit}>Deposit 💳</button>
+        <div style={{ display:"flex", gap:8, marginTop:16 }}>
+          <button style={{ background:BRAND, color:"white", border:"none", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onWithdraw}>Withdraw</button>
+          <button style={{ background:"rgba(255,255,255,0.14)", color:"white", border:"1px solid rgba(255,255,255,0.25)", borderRadius:8, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onDeposit}>Deposit</button>
         </div>
       </div>
 
@@ -2788,14 +2793,14 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
               else { setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000); }
             }}
             disabled={nothingToClear}
-            style={{ background:"none", border:"none", color: nothingToClear ? T.textSub : "#E24B4A", fontSize:11, fontWeight:600, cursor: nothingToClear ? "default" : "pointer", padding:0 }}>
-            {confirmClear ? "Tap to confirm" : "🗑 Clear history"}
+            style={{ background:"none", border:"none", color: nothingToClear ? T.textSub : DANGER, fontSize:11, fontWeight:600, cursor: nothingToClear ? "default" : "pointer", padding:0 }}>
+            {confirmClear ? "Tap to confirm" : "Clear history"}
           </button>
         </div>
         <select
           value={view}
           onChange={e => setView(e.target.value)}
-          style={{ width:"100%", padding:"11px 14px", borderRadius:12, border:`0.5px solid ${T.chipBrd}`, background:T.chipBg, color:T.text, fontSize:13, fontWeight:600, cursor:"pointer", appearance:"none", WebkitAppearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%231D9E75' stroke-width='2' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center" }}
+          style={{ width:"100%", padding:"10px 14px", borderRadius:10, border:`1px solid ${T.chipBrd}`, background:T.chipBg, color:T.text, fontSize:13, fontWeight:600, cursor:"pointer", appearance:"none", WebkitAppearance:"none", backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%230F6E56' stroke-width='2' fill='none' fill-rule='evenodd'/%3E%3C/svg%3E\")", backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center" }}
         >
           <option value="transactions">Transactions ({visibleTxns.length})</option>
           <option value="withdrawals">Withdrawals ({visibleWithdrawals.length})</option>
@@ -2811,7 +2816,7 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
         {view === "withdrawals" && (visibleWithdrawals.length === 0
           ? <div style={{ textAlign:"center", color:T.textSub, padding:30 }}>No withdrawal history</div>
           : visibleWithdrawals.map(w => (
-              <div key={w.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div key={w.id} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"13px 15px", margin:"0 0 8px", boxShadow:"none", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                 <div>
                   <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{fmt(w.amount)}</div>
                   <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{w.method?.toUpperCase()} · {new Date(w.requested_at).toLocaleDateString()}</div>
@@ -2823,7 +2828,7 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
         {view === "deposits" && (visibleDeposits.length === 0
           ? <div style={{ textAlign:"center", color:T.textSub, padding:30 }}>No deposit history</div>
           : visibleDeposits.map(d => (
-              <div key={d.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div key={d.id} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"13px 15px", margin:"0 0 8px", boxShadow:"none", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                 <div>
                   <div style={{ fontWeight:600, fontSize:14, color:T.text }}>+{fmt(d.amount)}</div>
                   <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{d.method?.toUpperCase()} · {new Date(d.requested_at).toLocaleDateString()}</div>
@@ -2840,17 +2845,16 @@ function WalletTab({ profile, txns, withdrawals, deposits, settings, onWithdraw,
 function TxRow({ tx, dark }) {
   const T = theme(dark);
   const isCredit = tx.amount > 0;
-  const icons = { task:"✅", referral:"👥", withdrawal:"💸", bonus:"🎁", streak:"🔥", deposit:"💳", activation:"⚡", investment:"🌱", investment_profit:"💰" };
   return (
-    <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", alignItems:"center", gap:12 }}>
-      <div style={{ width:38, height:38, borderRadius:10, background: isCredit ? "#E1F5EE" : "#FAECE7", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>
-        {icons[tx.type] ?? (isCredit ? "➕" : "➖")}
+    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"13px 15px", margin:"0 0 8px", boxShadow:"none", display:"flex", alignItems:"center", gap:12 }}>
+      <div style={{ width:34, height:34, borderRadius:8, background: isCredit ? BRAND_SOFT : "#F7E9E7", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, color: isCredit ? BRAND_DARK : DANGER, fontWeight:700 }}>
+        {isCredit ? "+" : "–"}
       </div>
       <div style={{ flex:1 }}>
         <div style={{ fontWeight:500, fontSize:13, color:T.text }}>{tx.description ?? tx.type}</div>
         <div style={{ fontSize:11, color:T.textSub }}>{new Date(tx.created_at).toLocaleString()}</div>
       </div>
-      <div style={{ fontWeight:700, fontSize:15, color: isCredit ? BRAND_DARK : "#E24B4A" }}>
+      <div style={{ fontWeight:700, fontSize:14, color: isCredit ? BRAND_DARK : DANGER }}>
         {isCredit ? "+" : ""}{fmt(tx.amount)}
       </div>
     </div>
@@ -2858,9 +2862,9 @@ function TxRow({ tx, dark }) {
 }
 
 function StatusPill({ status }) {
-  const map = { pending:{bg:"#FAEEDA",tc:"#854F0B"}, processing:{bg:"#E6F1FB",tc:"#185FA5"}, paid:{bg:"#E1F5EE",tc:"#0F6E56"}, confirmed:{bg:"#E1F5EE",tc:"#0F6E56"}, rejected:{bg:"#FAECE7",tc:"#993C1D"} };
-  const c   = map[status] ?? { bg:"#f0f0f0", tc:"#888" };
-  return <span style={{ background:c.bg, color:c.tc, padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:600 }}>{status}</span>;
+  const map = { pending:{bg:"#FBF1DE",tc:"#8A6416"}, processing:{bg:"#E7EEF5",tc:"#33587A"}, paid:{bg:BRAND_SOFT,tc:BRAND_DARK}, confirmed:{bg:BRAND_SOFT,tc:BRAND_DARK}, rejected:{bg:"#F7E9E7",tc:"#8A362F"} };
+  const c   = map[status] ?? { bg:"#EEF0EF", tc:"#67746D" };
+  return <span style={{ background:c.bg, color:c.tc, padding:"4px 11px", borderRadius:6, fontSize:11, fontWeight:600 }}>{status}</span>;
 }
 
 // ── Grow Tab ───────────────────────────────────────────────────
@@ -2868,6 +2872,9 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
   const T           = theme(dark);
   const activeInvs  = investments.filter(i => i.status === "active");
   const historyInvs = investments.filter(i => i.status === "completed");
+  // Plan list rendered as a compact accordion instead of 16 full-height
+  // cards — keeps the page short while all the same detail is one tap away.
+  const [openLevel, setOpenLevel] = useState(null);
 
   // Highest active tier, derived from the investments themselves.
   // getActiveTier already returns everything needed for display
@@ -2888,61 +2895,54 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:100 }}>
 
       {/* ── Hero card ── */}
-      <div style={{ background:`linear-gradient(135deg,${BG_DARK} 0%,#1a3d2b 50%,${BRAND_DARK} 100%)`,
-        margin:16, borderRadius:24, padding:"28px 22px", color:"white",
-        boxShadow:"0 8px 32px rgba(15,46,34,0.4)", position:"relative", overflow:"hidden" }}>
-        <div style={{ position:"absolute", right:-30, top:-30, width:130, height:130, borderRadius:"50%", background:"rgba(255,255,255,0.05)" }} />
-        <div style={{ position:"absolute", right:20, bottom:-40, width:100, height:100, borderRadius:"50%", background:"rgba(255,255,255,0.04)" }} />
-        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:6 }}>Task earnings so far</div>
-        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:42, fontWeight:700, letterSpacing:-1, marginBottom:4 }}>
+      <div style={{ background:BRAND_DARK, margin:16, borderRadius:12, padding:"22px 20px", color:"white", boxShadow:"none" }}>
+        <div style={{ fontSize:11, opacity:0.7, letterSpacing:"0.04em", textTransform:"uppercase", marginBottom:6 }}>Task earnings so far</div>
+        <div style={{ fontFamily:"'Sora',sans-serif", fontSize:34, fontWeight:700, letterSpacing:"-0.02em", marginBottom:4 }}>
           {fmt(displayProfit)}
         </div>
-        <div style={{ fontSize:12, opacity:0.65, marginBottom:14 }}>
+        <div style={{ fontSize:12, opacity:0.6, marginBottom:14 }}>
           Across {activeInvs.length} active plan{activeInvs.length !== 1 ? "s" : ""} · grows as tasks complete
         </div>
         {totalLocked > 0 && (
-          <div style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.10)", borderRadius:12, padding:"10px 14px", marginBottom:16 }}>
-            <span style={{ fontSize:16 }}>🔒</span>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:10, padding:"10px 14px", marginBottom:12 }}>
             <div>
-              <div style={{ fontSize:13, fontWeight:700 }}>{fmt(totalLocked)} in locked task earnings</div>
-              <div style={{ fontSize:10, opacity:0.75 }}>Released to your balance monthly</div>
+              <div style={{ fontSize:13, fontWeight:600 }}>{fmt(totalLocked)} in locked task earnings</div>
+              <div style={{ fontSize:10, opacity:0.7 }}>Released to your balance monthly</div>
             </div>
           </div>
         )}
         {/* Active tier badge */}
         {vipInfo ? (
-          <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.12)", borderRadius:12, padding:"8px 14px" }}>
-            <span style={{ fontSize:20 }}>{vipInfo.label.split(" ")[0]}</span>
+          <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.10)", border:"1px solid rgba(255,255,255,0.18)", borderRadius:10, padding:"7px 13px" }}>
             <div>
-              <div style={{ fontSize:12, fontWeight:700 }}>{vipInfo.label} Member</div>
-              <div style={{ fontSize:10, opacity:0.75 }}>{vipInfo.perk}</div>
+              <div style={{ fontSize:12, fontWeight:600 }}>{vipInfo.label} member</div>
+              <div style={{ fontSize:10, opacity:0.7 }}>{vipInfo.perk}</div>
             </div>
           </div>
         ) : (
-          <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.10)", borderRadius:12, padding:"8px 14px" }}>
-            <span style={{ fontSize:16 }}>🔒</span>
-            <div style={{ fontSize:12, opacity:0.8 }}>Buy a plan to unlock tasks & earning boosts</div>
+          <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:10, padding:"7px 13px" }}>
+            <div style={{ fontSize:12, opacity:0.8 }}>Buy a plan to unlock tasks and earning boosts</div>
           </div>
         )}
       </div>
 
       {/* ── Task access summary card ── */}
-      <div style={{ background:T.card, borderRadius:16, margin:"0 16px 16px", padding:"16px 18px", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
-        <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:14 }}>📋 Your Task Access</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, margin:"0 16px 16px", padding:"14px 16px", boxShadow:"none" }}>
+        <div style={{ fontWeight:600, fontSize:13, color:T.text, marginBottom:12 }}>Your task access</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
           {[
-            ["Tasks/day",   activeInvs.length ? String(activeInvs.reduce((s,i)=>s+(i.daily_tasks??0),0)) : "0",   tierInfo ? tierInfo.color : "#aaa"],
-            ["Auto-mode",   activeInvs.filter(i=>i.mode==="auto").length,                                          tierInfo ? tierInfo.color : "#aaa"],
-            ["Exclusive",   tierInfo?.exclusiveTasks ? "Yes 👑" : (tierInfo ? "No" : "—"),                     tierInfo?.exclusiveTasks ? "#B8860B" : "#aaa"],
-          ].map(([lbl, val, tc]) => (
-            <div key={lbl} style={{ textAlign:"center", background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px 6px" }}>
+            ["Tasks/day",   activeInvs.length ? String(activeInvs.reduce((s,i)=>s+(i.daily_tasks??0),0)) : "0"],
+            ["Auto-mode",   activeInvs.filter(i=>i.mode==="auto").length],
+            ["Exclusive",   tierInfo?.exclusiveTasks ? "Yes" : (tierInfo ? "No" : "—")],
+          ].map(([lbl, val]) => (
+            <div key={lbl} style={{ textAlign:"center", background: dark ? "#0F2018" : "#F7F8F7", borderRadius:9, padding:"10px 6px" }}>
               <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
-              <div style={{ fontWeight:700, fontSize:15, color:tc }}>{val}</div>
+              <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{val}</div>
             </div>
           ))}
         </div>
         {activeInvs.length > 1 && (
-          <div style={{ fontSize:11, color:T.textSub, marginTop:12, lineHeight:1.6 }}>
+          <div style={{ fontSize:11, color:T.textSub, marginTop:10, lineHeight:1.6 }}>
             {activeInvs.map(i => `${i.plan_name}: ${fmt(i.task_reward)}/task × ${i.daily_tasks}/day${i.mode==="auto" ? " (auto)" : ""}`).join(" · ")}
           </div>
         )}
@@ -2951,95 +2951,93 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
       {/* ── Active investments ── */}
       {activeInvs.length > 0 && (
         <div style={{ padding:"0 16px", marginBottom:16 }}>
-          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📈 Your active investments</div>
+          <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:10 }}>Your active investments</div>
           {activeInvs.map(inv => <ActiveInvestmentCard key={inv.id} investment={inv} userId={profile?.id} walletBalance={profile?.balance ?? 0} onRefresh={onRefresh} dark={dark} />)}
         </div>
       )}
 
-      {/* ── Vault ladder — 16 fixed tiers, each a fixed amount, 65%/month, 12-cycle (1yr) lockup ── */}
+      {/* ── Vault ladder — 16 fixed tiers, rendered as a compact table.
+           Each row expands in place instead of showing a full card, which
+           is what kept this page from ever fitting on one screen. ── */}
       <div style={{ padding:"0 16px", marginBottom:16 }}>
-        <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:4 }}>Growth Plans</div>
-        <div style={{ fontSize:12, color:T.textSub, marginBottom:14 }}>
-          Each plan pays 65% profit monthly, with its own daily task count and reward.
+        <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:4 }}>Growth plans</div>
+        <div style={{ fontSize:12, color:T.textSub, marginBottom:10 }}>
+          Every plan pays 65% profit monthly. Tap a plan to see its task detail.
         </div>
-        {plans.map(plan => {
-          const vt    = tierStyle(plan.level);
-          const isTop = plan.level === 16;
-          const gate  = canPurchasePlan(investments, plan.level);
+        <div style={{ border:`1px solid ${T.border}`, borderRadius:12, overflow:"hidden" }}>
+          {plans.map((plan, idx) => {
+            const vt    = tierStyle(plan.level);
+            const isTop = plan.level === 16;
+            const gate  = canPurchasePlan(investments, plan.level);
+            const open  = openLevel === plan.level;
 
-          return (
-            <div key={plan.key} style={{
-              background: isTop ? "linear-gradient(135deg,#1a1000,#2d1f00)" : T.card,
-              borderRadius:18, marginBottom:14, overflow:"hidden",
-              boxShadow: isTop ? "0 8px 32px rgba(184,134,11,0.25)" : "0 4px 16px rgba(0,0,0,0.08)",
-              border: isTop ? "1.5px solid #B8860B" : `0.5px solid ${T.border}`,
-            }}>
-              {/* Plan header */}
-              <div style={{ background:vt.gradient, padding:"18px 20px", color:"white" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                  <div>
-                    {isTop && <div style={{ fontSize:10, fontWeight:700, background:"rgba(255,215,0,0.25)", borderRadius:20, padding:"2px 10px", display:"inline-block", marginBottom:6, letterSpacing:"0.08em" }}>👑 TOP TIER</div>}
-                    <div style={{ fontSize:30, marginBottom:4 }}>{plan.icon}</div>
-                    <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>{plan.name}</div>
-                    <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
-                      65% monthly profit
-                    </div>
-                  </div>
-                  <div style={{ textAlign:"right" }}>
-                    <div style={{ fontSize:11, opacity:0.75 }}>Amount</div>
-                    <div style={{ fontFamily:"'Sora',sans-serif", fontSize:20, fontWeight:700 }}>{fmt(plan.amount)}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Plan stats */}
-              <div style={{ padding:"14px 18px" }}>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
-                  {[
-                    ["Amount",       fmt(plan.amount)],
-                    ["Profit/30d",   fmt(plan.monthlyEarnings)],
-                    ["Tasks/day",    String(plan.dailyTasks)],
-                    ["Per task",     fmt(plan.taskReward)],
-                  ].map(([lbl, val]) => (
-                    <div key={lbl} style={{ textAlign:"center", background: isTop ? "rgba(184,134,11,0.12)" : (dark ? "#142e20" : "#f7faf9"), borderRadius:10, padding:"10px 4px" }}>
-                      <div style={{ fontSize:9, color: isTop ? "#B8860B" : T.textSub, marginBottom:3 }}>{lbl}</div>
-                      <div style={{ fontWeight:700, fontSize:12, color: isTop ? "#FFD700" : T.text }}>{val}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {isTop && (
-                  <div style={{ background:"rgba(184,134,11,0.15)", borderRadius:10, padding:"10px 14px", marginBottom:12, display:"flex", alignItems:"center", gap:8 }}>
-                    <span style={{ fontSize:18 }}>👑</span>
-                    <div>
-                      <div style={{ fontSize:12, fontWeight:700, color:"#FFD700" }}>Exclusive Legend Tasks</div>
-                      <div style={{ fontSize:11, color:"#B8860B", marginTop:2 }}>High-paying tasks only top-tier members can see</div>
-                    </div>
-                  </div>
-                )}
-
+            return (
+              <div key={plan.key} style={{ borderTop: idx === 0 ? "none" : `1px solid ${T.border}`, background:T.card }}>
                 <button
-                  style={{ ...S.primaryBtn, background: gate.allowed ? vt.gradient : "#c7ccd1",
-                    padding:"12px 0", fontSize:14, fontWeight:700,
-                    cursor: gate.allowed ? "pointer" : "not-allowed", opacity: gate.allowed ? 1 : 0.75 }}
-                  onClick={() => gate.allowed && onBuyPlan(plan)}
-                  disabled={!gate.allowed}
+                  onClick={() => setOpenLevel(open ? null : plan.level)}
+                  style={{ width:"100%", background:"none", border:"none", cursor:"pointer", padding:"12px 14px", display:"flex", alignItems:"center", gap:12, textAlign:"left" }}
                 >
-                  {gate.allowed ? `Invest ${fmt(plan.amount)} →` : "Plan already active"}
+                  <div style={{ width:6, alignSelf:"stretch", borderRadius:3, background:vt.color, flexShrink:0 }} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <span style={{ fontWeight:600, fontSize:13, color:T.text }}>{plan.name}</span>
+                      {isTop && <span style={{ fontSize:9, fontWeight:700, color:GOLD, border:`1px solid ${GOLD}`, borderRadius:5, padding:"1px 6px" }}>TOP TIER</span>}
+                    </div>
+                    <div style={{ fontSize:11, color:T.textSub, marginTop:1 }}>{plan.dailyTasks} tasks/day · 65% monthly</div>
+                  </div>
+                  <div style={{ textAlign:"right", flexShrink:0 }}>
+                    <div style={{ fontWeight:700, fontSize:13, color:T.text }}>{fmt(plan.amount)}</div>
+                    <div style={{ fontSize:10, color:T.textSub }}>{open ? "hide ▲" : "details ▼"}</div>
+                  </div>
                 </button>
-                {!gate.allowed && (
-                  <div style={{ fontSize:11, color:"#993C1D", marginTop:6, textAlign:"center" }}>{gate.reason}</div>
+
+                {open && (
+                  <div style={{ padding:"0 14px 14px" }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:12 }}>
+                      {[
+                        ["Amount",       fmt(plan.amount)],
+                        ["Profit/30d",   fmt(plan.monthlyEarnings)],
+                        ["Tasks/day",    String(plan.dailyTasks)],
+                        ["Per task",     fmt(plan.taskReward)],
+                      ].map(([lbl, val]) => (
+                        <div key={lbl} style={{ textAlign:"center", background: dark ? "#0F2018" : "#F7F8F7", borderRadius:8, padding:"9px 4px" }}>
+                          <div style={{ fontSize:9, color:T.textSub, marginBottom:3 }}>{lbl}</div>
+                          <div style={{ fontWeight:700, fontSize:12, color:T.text }}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {isTop && (
+                      <div style={{ background: dark ? "#241C08" : "#FBF3E1", border:`1px solid ${GOLD}`, borderRadius:8, padding:"9px 12px", marginBottom:10 }}>
+                        <div style={{ fontSize:12, fontWeight:600, color:GOLD }}>Exclusive Legend tasks</div>
+                        <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>High-paying tasks only top-tier members can see</div>
+                      </div>
+                    )}
+
+                    <button
+                      style={{ ...S.primaryBtn, background: gate.allowed ? BRAND : (dark ? "#22392F" : "#DBDFDC"),
+                        padding:"11px 0", fontSize:13, fontWeight:700, color: gate.allowed ? "white" : T.textSub,
+                        cursor: gate.allowed ? "pointer" : "not-allowed" }}
+                      onClick={() => gate.allowed && onBuyPlan(plan)}
+                      disabled={!gate.allowed}
+                    >
+                      {gate.allowed ? `Invest ${fmt(plan.amount)}` : "Plan already active"}
+                    </button>
+                    {!gate.allowed && (
+                      <div style={{ fontSize:11, color:DANGER, marginTop:6, textAlign:"center" }}>{gate.reason}</div>
+                    )}
+                  </div>
                 )}
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       {/* ── Investment history ── */}
       {historyInvs.length > 0 && (
         <div style={{ padding:"0 16px", marginBottom:20 }}>
-          <div style={{ fontWeight:600, fontSize:15, color:T.text, marginBottom:12 }}>📜 Completed plans</div>
+          <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:10 }}>Completed plans</div>
           {historyInvs.map(inv => {
             const vt = tierStyle(inv.plan_level ?? 1);
             // Monthly profit was already paid out cycle by cycle along the
@@ -3049,23 +3047,23 @@ function GrowTab({ profile, investments, plans, onBuyPlan, onReinvest, onRefresh
             const principalOut = inv.current_principal ?? inv.amount;
             const bonus         = principalOut - inv.amount;
             return (
-              <div key={inv.id} style={{ background:T.card, borderRadius:14, padding:"14px 16px", marginBottom:10, boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
+              <div key={inv.id} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:"13px 15px", marginBottom:8, boxShadow:"none" }}>
                 <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-                  <div style={{ width:40, height:40, borderRadius:12, background:vt.gradient, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>{inv.plan_icon}</div>
+                  <div style={{ width:6, height:34, borderRadius:3, background:vt.color, flexShrink:0 }} />
                   <div style={{ flex:1 }}>
-                    <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{inv.plan_name} Plan</div>
+                    <div style={{ fontWeight:600, fontSize:13, color:T.text }}>{inv.plan_name} plan</div>
                     <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Completed {new Date(inv.credited_at ?? inv.ends_at).toLocaleDateString()}</div>
                   </div>
                   <div style={{ textAlign:"right" }}>
-                    <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:14 }}>{fmt(principalOut)}</div>
+                    <div style={{ fontWeight:700, color:BRAND_DARK, fontSize:13 }}>{fmt(principalOut)}</div>
                     <div style={{ fontSize:10, color:T.textSub }}>{bonus > 0 ? `principal + ${fmt(bonus)} reinvested` : "principal returned"}</div>
                   </div>
                 </div>
                 <button
-                  style={{ width:"100%", background: dark ? "#142e20" : "#f0faf6", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"9px 0", fontSize:12, fontWeight:700, color:BRAND_DARK, cursor:"pointer" }}
+                  style={{ width:"100%", background: dark ? "#0F2018" : "#F7F8F7", border:`1px solid ${T.border}`, borderRadius:8, padding:"8px 0", fontSize:12, fontWeight:700, color:BRAND_DARK, cursor:"pointer" }}
                   onClick={() => onReinvest(inv)}
                 >
-                  🔁 Reinvest {fmt(principalOut)} into a new plan
+                  Reinvest {fmt(principalOut)} into a new plan
                 </button>
               </div>
             );
@@ -3117,28 +3115,28 @@ function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefres
   };
 
   return (
-    <div style={{ background:T.card, borderRadius:18, marginBottom:12, overflow:"hidden", boxShadow:"0 4px 16px rgba(0,0,0,0.1)", border:`0.5px solid ${T.border}` }}>
-      <div style={{ background:vt.gradient, padding:"14px 18px", color:"white", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+    <div style={{ background:T.card, borderRadius:12, marginBottom:10, overflow:"hidden", boxShadow:"none", border:`1px solid ${T.border}` }}>
+      <div style={{ padding:"13px 16px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <span style={{ fontSize:24 }}>{inv.plan_icon}</span>
+          <div style={{ width:6, height:32, borderRadius:3, background:vt.color, flexShrink:0 }} />
           <div>
-            <div style={{ fontWeight:700, fontSize:16 }}>{inv.plan_name} Plan</div>
-            <div style={{ fontSize:11, opacity:0.8 }}>Cycle {cycleNumber} of {cyclesTotal} · {isAuto ? "⚡ Auto-mode" : "👆 Manual"}</div>
+            <div style={{ fontWeight:600, fontSize:14, color:T.text }}>{inv.plan_name} plan</div>
+            <div style={{ fontSize:11, color:T.textSub }}>Cycle {cycleNumber} of {cyclesTotal} · {isAuto ? "Auto-mode" : "Manual"}</div>
           </div>
         </div>
         <div style={{ textAlign:"right" }}>
-          <div style={{ fontSize:10, opacity:0.75 }}>Principal (locked)</div>
-          <div style={{ fontWeight:700, fontSize:15 }}>{fmt(currentPrincipal)}</div>
+          <div style={{ fontSize:10, color:T.textSub }}>Principal (locked)</div>
+          <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{fmt(currentPrincipal)}</div>
         </div>
       </div>
 
-      <div style={{ padding:"16px 18px" }}>
+      <div style={{ padding:"14px 16px" }}>
         {/* This cycle's task earnings */}
-        <div style={{ textAlign:"center", marginBottom:14, background: dark ? "#142e20" : "#f0faf6", borderRadius:14, padding:"14px" }}>
-          <div style={{ fontSize:10, color:T.textSub, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>
+        <div style={{ textAlign:"center", marginBottom:14, background: dark ? "#0F2018" : "#F7F8F7", borderRadius:10, padding:"14px" }}>
+          <div style={{ fontSize:10, color:T.textSub, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:4 }}>
             This cycle's task earnings
           </div>
-          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:32, fontWeight:700, color:BRAND_DARK, letterSpacing:-1 }}>
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:28, fontWeight:700, color:BRAND_DARK, letterSpacing:"-0.02em" }}>
             {fmt(locked)}
           </div>
           <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
@@ -3147,7 +3145,7 @@ function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefres
         </div>
 
         {!isAuto && (
-          <div style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
+          <div style={{ background: dark ? "#0F2018" : "#F7F8F7", border:`1px solid ${T.border}`, borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
               <div style={{ fontSize:12, color:T.text }}>
                 Forgot to turn on auto-mode? Switch this plan over for a one-time <strong>{fmt(autoFee)}</strong> fee, charged from your wallet.
@@ -3158,12 +3156,12 @@ function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefres
                 style={{ flexShrink:0, border:"none", borderRadius:8, padding:"8px 12px", fontSize:12, fontWeight:700,
                   background: BRAND, color:"white", cursor: enabling ? "default" : "pointer", opacity: enabling ? 0.7 : 1 }}
               >
-                {enabling ? "..." : "⚡ Enable"}
+                {enabling ? "..." : "Enable"}
               </button>
             </div>
           </div>
         )}
-        {err && <div style={{ fontSize:11, color:"#c0392b", marginBottom:14 }}>{err}</div>}
+        {err && <div style={{ fontSize:11, color:DANGER, marginBottom:14 }}>{err}</div>}
 
         {/* Cycle progress bar */}
         <div style={{ marginBottom:10 }}>
@@ -3171,8 +3169,8 @@ function ActiveInvestmentCard({ investment: inv, userId, walletBalance, onRefres
             <span>{cyclePct}% through the year</span>
             <span>{nextDue ? `${daysLeft}d ${hrsLeft}h to next payout` : "—"}</span>
           </div>
-          <div style={{ height:8, background: dark ? "#1a3d2b" : "#eee", borderRadius:4 }}>
-            <div style={{ height:"100%", width:`${cyclePct}%`, background:`linear-gradient(90deg,${BRAND},${BRAND_DARK})`, borderRadius:4, transition:"width 1s linear" }} />
+          <div style={{ height:6, background: dark ? "#22392F" : "#EEEEEE", borderRadius:3 }}>
+            <div style={{ height:"100%", width:`${cyclePct}%`, background:BRAND, borderRadius:3, transition:"width 1s linear" }} />
           </div>
         </div>
 
@@ -3285,24 +3283,24 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
 
   if (step === "success") {
     return (
-      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
-        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
-          <div style={{ fontSize:64, marginBottom:16 }}>{plan.icon}</div>
-          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>
-            {plan.name} Plan Active!
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
+        <div style={{ background:T.card, borderRadius:"16px 16px 0 0", padding:"32px 24px 40px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
+          <div style={{ width:44, height:44, borderRadius:"50%", background:BRAND_SOFT, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", color:BRAND_DARK, fontWeight:700, fontSize:18 }}>✓</div>
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:20, fontWeight:700, color:T.text, marginBottom:8 }}>
+            {plan.name} plan active
           </div>
           <div style={{ fontSize:14, color:T.textSub, marginBottom:8, lineHeight:1.7 }}>
             {autoMode
               ? "Your plan is now active. Your daily tasks will complete automatically, and your profit grows as each one finishes."
               : "Your plan is now active. Complete your daily tasks to earn profit — nothing accrues until a task is done."}
           </div>
-          <div style={{ background:"#E1F5EE", borderRadius:12, padding:"14px", marginBottom:24 }}>
+          <div style={{ background: dark ? "#0F2018" : "#F7F8F7", border:`1px solid ${T.border}`, borderRadius:10, padding:"14px", marginBottom:24 }}>
             <div style={{ fontSize:12, color:T.textSub, marginBottom:4 }}>Target profit this cycle</div>
-            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:28, fontWeight:700, color:BRAND_DARK }}>{fmt(totalProfit)}</div>
+            <div style={{ fontFamily:"'Sora',sans-serif", fontSize:26, fontWeight:700, color:BRAND_DARK }}>{fmt(totalProfit)}</div>
             <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>released to your balance once the cycle completes</div>
           </div>
-          <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 40px", background:vt.gradient }} onClick={onClose}>
-            {autoMode ? "Got it →" : "Start my tasks →"}
+          <button style={{ ...S.primaryBtn, width:"auto", padding:"12px 36px" }} onClick={onClose}>
+            {autoMode ? "Got it" : "Start my tasks"}
           </button>
         </div>
       </div>
@@ -3311,10 +3309,10 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
 
   if (step === "waiting") {
     return (
-      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
-        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"40px 24px 48px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
-          <div style={{ width:72, height:72, borderRadius:"50%", border:`4px solid ${dark ? "#2a5040" : "#eee"}`, borderTopColor:BRAND, margin:"0 auto 24px", animation:"spin 1s linear infinite" }} />
-          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:20, fontWeight:700, color:T.text, marginBottom:10 }}>
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }}>
+        <div style={{ background:T.card, borderRadius:"16px 16px 0 0", padding:"36px 24px 44px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }}>
+          <div style={{ width:56, height:56, borderRadius:"50%", border:`3px solid ${T.border}`, borderTopColor:BRAND, margin:"0 auto 22px", animation:"spin 1s linear infinite" }} />
+          <div style={{ fontFamily:"'Sora',sans-serif", fontSize:18, fontWeight:700, color:T.text, marginBottom:10 }}>
             Waiting for payment...
           </div>
           <div style={{ fontSize:14, color:T.textSub, lineHeight:1.7, marginBottom:8 }}>
@@ -3325,7 +3323,7 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
             Enter your {method.toUpperCase()} PIN to pay <strong style={{ color:T.text }}>{fmt(amountNum)}</strong>.
             Your {plan.name} plan activates automatically once confirmed.
           </div>
-          <button onClick={() => { stopPolling(); setStep("confirm"); }} style={{ background:"none", border:`0.5px solid ${T.border}`, borderRadius:10, padding:"10px 24px", fontSize:13, color:T.textSub, cursor:"pointer" }}>
+          <button onClick={() => { stopPolling(); setStep("confirm"); }} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:9, padding:"10px 24px", fontSize:13, color:T.textSub, cursor:"pointer" }}>
             Cancel
           </button>
           <div style={{ fontSize:11, color:T.textSub, marginTop:14, lineHeight:1.5 }}>
@@ -3338,37 +3336,36 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
   }
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
-      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+      <div style={{ background:T.card, borderRadius:"16px 16px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
 
-        {/* Coloured header */}
-        <div style={{ background:vt.gradient, padding:"20px 22px", color:"white" }}>
+        {/* Header */}
+        <div style={{ background:BRAND_DARK, padding:"18px 20px", color:"white", borderBottom:`3px solid ${vt.color}` }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
             <div>
-              <div style={{ fontSize:28, marginBottom:4 }}>{plan.icon}</div>
-              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>
-                {plan.name} Plan
+              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:17 }}>
+                {plan.name} plan
               </div>
-              <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>
+              <div style={{ fontSize:12, opacity:0.7, marginTop:2 }}>
                 65% monthly profit
               </div>
             </div>
-            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
+            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.14)", border:"none", color:"white", borderRadius:8, width:28, height:28, fontSize:16, cursor:"pointer" }}>×</button>
           </div>
         </div>
 
-        <div style={{ padding:"20px 22px 32px" }}>
-          {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+        <div style={{ padding:"18px 20px 28px" }}>
+          {err && <div style={{ background:"#F7E9E7", color:"#8A362F", borderRadius:8, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
           {/* Summary cards */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:14 }}>
             {[
               ["You pay", fmt(totalCharge)],
               ["Target profit/cycle", fmt(totalProfit)],
               ["Tasks/day", String(plan.dailyTasks)],
               ["Per task", fmt(plan.taskReward)],
             ].map(([lbl, val]) => (
-              <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
+              <div key={lbl} style={{ background: dark ? "#0F2018" : "#F7F8F7", borderRadius:9, padding:"11px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
                 <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{val}</div>
               </div>
@@ -3382,22 +3379,22 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
             type="button"
             onClick={() => setAutoMode(a => !a)}
             style={{
-              width:"100%", textAlign:"left", padding:"12px 14px", borderRadius:12, marginBottom:16, cursor:"pointer",
-              border: autoMode ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
-              background: autoMode ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+              width:"100%", textAlign:"left", padding:"12px 14px", borderRadius:10, marginBottom:14, cursor:"pointer",
+              border: autoMode ? `1.5px solid ${BRAND}` : `1px solid ${T.inputBrd}`,
+              background: autoMode ? BRAND_SOFT : T.inputBg,
               display:"flex", justifyContent:"space-between", alignItems:"center",
             }}
           >
             <div>
-              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>⚡ Auto-mode {autoMode ? "(on)" : "(off)"}</div>
+              <div style={{ fontSize:13, fontWeight:600, color: autoMode ? BRAND_DARK : T.text }}>Auto-mode {autoMode ? "(on)" : "(off)"}</div>
               <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>
                 {autoMode
                   ? `Tasks complete automatically. One-time fee: ${fmt(autoModeFee)}.`
                   : `Do tasks yourself for free, or pay ${fmt(autoModeFee)} once to automate them.`}
               </div>
             </div>
-            <div style={{ width:44, height:24, borderRadius:20, background: autoMode ? BRAND : (dark ? "#2a5040" : "#ddd"), position:"relative", flexShrink:0 }}>
-              <div style={{ width:18, height:18, borderRadius:"50%", background:"white", position:"absolute", top:3, left: autoMode ? 23 : 3, transition:"left 0.15s ease" }} />
+            <div style={{ width:40, height:22, borderRadius:20, background: autoMode ? BRAND : (dark ? "#22392F" : "#DBDFDC"), position:"relative", flexShrink:0 }}>
+              <div style={{ width:16, height:16, borderRadius:"50%", background:"white", position:"absolute", top:3, left: autoMode ? 21 : 3, transition:"left 0.15s ease" }} />
             </div>
           </button>
 
@@ -3408,26 +3405,26 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
               onClick={() => setPayWith("wallet")}
               disabled={!walletEnough}
               style={{
-                textAlign:"left", padding:"12px 14px", borderRadius:12, cursor: walletEnough ? "pointer" : "not-allowed",
-                border: payWith === "wallet" ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
-                background: payWith === "wallet" ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+                textAlign:"left", padding:"12px 14px", borderRadius:10, cursor: walletEnough ? "pointer" : "not-allowed",
+                border: payWith === "wallet" ? `1.5px solid ${BRAND}` : `1px solid ${T.inputBrd}`,
+                background: payWith === "wallet" ? BRAND_SOFT : T.inputBg,
                 opacity: walletEnough ? 1 : 0.5,
               }}
             >
-              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>💰 Wallet balance</div>
+              <div style={{ fontSize:13, fontWeight:600, color: payWith === "wallet" ? BRAND_DARK : T.text }}>Wallet balance</div>
               <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>{fmt(walletBalance)} available</div>
-              {!walletEnough && <div style={{ fontSize:10, color:"#E24B4A", marginTop:2 }}>Not enough balance</div>}
+              {!walletEnough && <div style={{ fontSize:10, color:DANGER, marginTop:2 }}>Not enough balance</div>}
             </button>
             <button
               type="button"
               onClick={() => setPayWith("mobile")}
               style={{
-                textAlign:"left", padding:"12px 14px", borderRadius:12, cursor:"pointer",
-                border: payWith === "mobile" ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
-                background: payWith === "mobile" ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+                textAlign:"left", padding:"12px 14px", borderRadius:10, cursor:"pointer",
+                border: payWith === "mobile" ? `1.5px solid ${BRAND}` : `1px solid ${T.inputBrd}`,
+                background: payWith === "mobile" ? BRAND_SOFT : T.inputBg,
               }}
             >
-              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>📱 Mobile money</div>
+              <div style={{ fontSize:13, fontWeight:600, color: payWith === "mobile" ? BRAND_DARK : T.text }}>Mobile money</div>
               <div style={{ fontSize:11, color:T.textSub, marginTop:2 }}>Pay a new deposit now</div>
             </button>
           </div>
@@ -3435,17 +3432,17 @@ function InvestModal({ plan, profile, userId, investments, onClose, onSuccess, d
           {payWith === "mobile" && (
             <>
               <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Mobile money number</label>
-              <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:8 }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
-              <div style={{ background: method === "mtn" ? "#FAEEDA" : "#E6F1FB", borderRadius:8, padding:"8px 12px", fontSize:12, fontWeight:600, color: method === "mtn" ? "#854F0B" : "#185FA5", marginBottom:16 }}>
-                📶 {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
+              <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text, marginBottom:8 }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => handlePhoneChange(e.target.value)} />
+              <div style={{ background: method === "mtn" ? "#FBF1DE" : "#E7EEF5", borderRadius:7, padding:"8px 12px", fontSize:12, fontWeight:600, color: method === "mtn" ? "#8A6416" : "#33587A", marginBottom:16 }}>
+                {method === "mtn" ? "MTN Mobile Money detected" : "Airtel Money detected"}
               </div>
             </>
           )}
 
-          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient, opacity: (payWith === "wallet" && !walletEnough) ? 0.6 : 1 }} onClick={handleSubmit} disabled={loading || (payWith === "wallet" && !walletEnough)}>
+          <button style={{ ...S.primaryBtn, padding:"13px 0", fontSize:14, opacity: (payWith === "wallet" && !walletEnough) ? 0.6 : 1 }} onClick={handleSubmit} disabled={loading || (payWith === "wallet" && !walletEnough)}>
             {loading
               ? (payWith === "wallet" ? "Activating..." : "Sending prompt...")
-              : (payWith === "wallet" ? `Pay ${fmt(totalCharge)} from wallet & activate →` : `Pay ${fmt(totalCharge)} & activate →`)}
+              : (payWith === "wallet" ? `Pay ${fmt(totalCharge)} from wallet & activate` : `Pay ${fmt(totalCharge)} & activate`)}
           </button>
           <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:10, lineHeight:1.6 }}>
             {fmt(amountNum)} is locked as principal{autoMode ? ` (plus a ${fmt(autoModeFee)} one-time auto-mode fee, charged once)` : ""}.{" "}
@@ -3497,49 +3494,48 @@ function ReinvestModal({ plan: maturedInv, profile, userId, plans, onClose, onSu
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
-      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
-        <div style={{ background:vt.gradient, padding:"20px 22px", color:"white" }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+      <div style={{ background:T.card, borderRadius:"16px 16px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ background:BRAND_DARK, padding:"18px 20px", color:"white", borderBottom:`3px solid ${vt.color}` }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
             <div>
-              <div style={{ fontSize:28, marginBottom:4 }}>🔁</div>
-              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>Reinvest</div>
-              <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>Using your returned principal — no new payment needed</div>
+              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:17 }}>Reinvest</div>
+              <div style={{ fontSize:12, opacity:0.7, marginTop:2 }}>Using your returned principal — no new payment needed</div>
             </div>
-            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
+            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.14)", border:"none", color:"white", borderRadius:8, width:28, height:28, fontSize:16, cursor:"pointer" }}>×</button>
           </div>
         </div>
 
-        <div style={{ padding:"20px 22px 32px" }}>
-          {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+        <div style={{ padding:"18px 20px 28px" }}>
+          {err && <div style={{ background:"#F7E9E7", color:"#8A362F", borderRadius:8, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
-          <div style={{ background:"#E1F5EE", borderRadius:10, padding:"10px 14px", fontSize:12, color:BRAND_DARK, marginBottom:16 }}>
-            💰 Principal available to reinvest: <strong>{fmt(payoutAvailable)}</strong>
+          <div style={{ background: dark ? "#0F2018" : "#F7F8F7", border:`1px solid ${T.border}`, borderRadius:9, padding:"10px 14px", fontSize:12, color:T.text, marginBottom:16 }}>
+            Principal available to reinvest: <strong>{fmt(payoutAvailable)}</strong>
           </div>
 
           <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Plan</label>
-          <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text, marginBottom:14 }} value={planLevel} onChange={e => setPlanLevel(Number(e.target.value))}>
-            {plans.map(p => <option key={p.level} value={p.level}>{p.icon} {p.name} — {fmt(p.amount)}</option>)}
+          <select style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text, marginBottom:14 }} value={planLevel} onChange={e => setPlanLevel(Number(e.target.value))}>
+            {plans.map(p => <option key={p.level} value={p.level}>{p.name} — {fmt(p.amount)}</option>)}
           </select>
 
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:18 }}>
             {[
               ["You reinvest", fmt(amountNum)],
               ["You earn", `+${fmt(totalProfit)}`],
               ["Term", fmtDuration()],
               ["Tasks/day", String(selectedPlan?.dailyTasks ?? 0)],
             ].map(([lbl, val]) => (
-              <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
+              <div key={lbl} style={{ background: dark ? "#0F2018" : "#F7F8F7", borderRadius:9, padding:"11px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
                 <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{val}</div>
               </div>
             ))}
           </div>
 
-          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient, opacity: amountValid ? 1 : 0.6 }} onClick={handleSubmit} disabled={loading || !amountValid}>
-            {loading ? "Reinvesting..." : `Reinvest ${fmt(amountNum)} →`}
+          <button style={{ ...S.primaryBtn, padding:"13px 0", fontSize:14, opacity: amountValid ? 1 : 0.6 }} onClick={handleSubmit} disabled={loading || !amountValid}>
+            {loading ? "Reinvesting..." : `Reinvest ${fmt(amountNum)}`}
           </button>
-          {!amountValid && <p style={{ fontSize:11, color:"#E24B4A", textAlign:"center", marginTop:8 }}>This plan costs more than your returned principal</p>}
+          {!amountValid && <p style={{ fontSize:11, color:DANGER, textAlign:"center", marginTop:8 }}>This plan costs more than your returned principal</p>}
         </div>
       </div>
     </div>
@@ -3572,53 +3568,52 @@ function ExtendModal({ investment: inv, userId, onClose, onSuccess, dark }) {
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
-      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
-        <div style={{ background:vt.gradient, padding:"20px 22px", color:"white" }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
+      <div style={{ background:T.card, borderRadius:"16px 16px 0 0", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease", overflow:"hidden" }} onClick={e => e.stopPropagation()}>
+        <div style={{ background:BRAND_DARK, padding:"18px 20px", color:"white" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
             <div>
-              <div style={{ fontSize:28, marginBottom:4 }}>⏳</div>
-              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20 }}>Extend {inv.plan_name}</div>
-              <div style={{ fontSize:12, opacity:0.8, marginTop:2 }}>Keep the same {fmt(inv.amount)} locked for longer</div>
+              <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:17 }}>Extend {inv.plan_name}</div>
+              <div style={{ fontSize:12, opacity:0.7, marginTop:2 }}>Keep the same {fmt(inv.amount)} locked for longer</div>
             </div>
-            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"white", borderRadius:10, width:32, height:32, fontSize:18, cursor:"pointer" }}>×</button>
+            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.14)", border:"none", color:"white", borderRadius:8, width:28, height:28, fontSize:16, cursor:"pointer" }}>×</button>
           </div>
         </div>
 
-        <div style={{ padding:"20px 22px 32px" }}>
-          {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+        <div style={{ padding:"18px 20px 28px" }}>
+          {err && <div style={{ background:"#F7E9E7", color:"#8A362F", borderRadius:8, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
           <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Add to lockup</label>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:16 }}>
             {[1, 3, 6, 12].map(m => (
               <button key={m} onClick={() => setMonths(m)}
                 style={{
-                  padding:"10px 0", borderRadius:10, fontSize:12, fontWeight:700, cursor:"pointer",
-                  border: months === m ? "none" : `0.5px solid ${T.border}`,
-                  background: months === m ? vt.gradient : "transparent",
-                  color: months === m ? "white" : T.text,
+                  padding:"10px 0", borderRadius:9, fontSize:12, fontWeight:700, cursor:"pointer",
+                  border: months === m ? `1.5px solid ${BRAND}` : `1px solid ${T.border}`,
+                  background: months === m ? BRAND_SOFT : "transparent",
+                  color: months === m ? BRAND_DARK : T.text,
                 }}>
                 +{fmtDuration(m)}
               </button>
             ))}
           </div>
 
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:18 }}>
             {[
               ["New total lockup", fmtDuration(newTotalMonths)],
               ["New maturity date", newEndsAt.toLocaleDateString()],
               ["Extra profit", `+${fmt(extraProfit)}`],
               ["New total profit", fmt(newProfit)],
             ].map(([lbl, val]) => (
-              <div key={lbl} style={{ background: dark ? "#142e20" : "#f7faf9", borderRadius:12, padding:"12px", textAlign:"center" }}>
+              <div key={lbl} style={{ background: dark ? "#0F2018" : "#F7F8F7", borderRadius:9, padding:"11px", textAlign:"center" }}>
                 <div style={{ fontSize:10, color:T.textSub, marginBottom:4 }}>{lbl}</div>
                 <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{val}</div>
               </div>
             ))}
           </div>
 
-          <button style={{ ...S.primaryBtn, padding:"14px 0", fontSize:15, background:vt.gradient }} onClick={handleSubmit} disabled={loading}>
-            {loading ? "Extending..." : `Extend by ${fmtDuration(months)} →`}
+          <button style={{ ...S.primaryBtn, padding:"13px 0", fontSize:14 }} onClick={handleSubmit} disabled={loading}>
+            {loading ? "Extending..." : `Extend by ${fmtDuration(months)}`}
           </button>
         </div>
       </div>
@@ -3725,20 +3720,19 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
-      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"24px 20px 36px", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
+      <div style={{ background:T.card, borderRadius:"16px 16px 0 0", padding:"22px 20px 32px", width:"100%", maxWidth:480, animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-          <div style={{ fontWeight:700, fontSize:18, color:T.text }}>Withdraw funds</div>
+          <div style={{ fontWeight:700, fontSize:16, fontFamily:"'Sora',sans-serif", color:T.text }}>Withdraw funds</div>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:T.textSub }}>×</button>
         </div>
-        {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+        {err && <div style={{ background:"#F7E9E7", color:"#8A362F", borderRadius:8, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
         {!kycApproved && (
-          <div style={{ background:"#FFF7E6", border:"1px solid #FCD9A0", borderRadius:14, padding:"18px 16px", textAlign:"center" }}>
-            <div style={{ fontSize:30, marginBottom:8 }}>🪪</div>
-            <div style={{ fontWeight:700, fontSize:14, color:"#854F0B", marginBottom:4 }}>
+          <div style={{ background:T.card, border:`1px solid ${GOLD}`, borderRadius:10, padding:"16px 16px", textAlign:"center" }}>
+            <div style={{ fontWeight:600, fontSize:14, color:T.text, marginBottom:4 }}>
               {kycStatus === "pending" ? "ID verification pending" : kycStatus === "rejected" ? "ID verification rejected" : "Verify your ID to withdraw"}
             </div>
-            <div style={{ fontSize:12, color:"#a0611a", marginBottom:14, lineHeight:1.6 }}>
+            <div style={{ fontSize:12, color:T.textSub, marginBottom:14, lineHeight:1.6 }}>
               {kycStatus === "pending"
                 ? "We're reviewing your documents. This usually takes a few hours — you'll be notified here once approved."
                 : kycStatus === "rejected"
@@ -3746,8 +3740,8 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
                 : "For your security, we require a one-time ID verification before your first withdrawal."}
             </div>
             {kycStatus !== "pending" && (
-              <button style={{ background:"#854F0B", color:"white", border:"none", borderRadius:10, padding:"11px 22px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onStartKyc}>
-                {kycStatus === "rejected" ? "Resubmit ID →" : "Verify ID now →"}
+              <button style={{ background:GOLD, color:"white", border:"none", borderRadius:8, padding:"10px 20px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={onStartKyc}>
+                {kycStatus === "rejected" ? "Resubmit ID" : "Verify ID now"}
               </button>
             )}
           </div>
@@ -3757,20 +3751,20 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Withdraw from</label>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
           {[
-            ["earnings", "💰 Earnings", "Task rewards + monthly plan profit", earningsBal],
-            ["referral", "👥 Referral", "Commissions from your team", referralBal],
+            ["earnings", "Earnings", "Task rewards + monthly plan profit", earningsBal],
+            ["referral", "Referral", "Commissions from your team", referralBal],
           ].map(([key, label, desc, bal]) => (
             <button
               key={key}
               type="button"
               onClick={() => setBucket(key)}
               style={{
-                textAlign:"left", padding:"12px 14px", borderRadius:12, cursor:"pointer",
-                border: bucket === key ? `1.5px solid ${BRAND}` : `0.5px solid ${T.inputBrd}`,
-                background: bucket === key ? (dark ? "#142e20" : "#E1F5EE") : T.inputBg,
+                textAlign:"left", padding:"12px 14px", borderRadius:10, cursor:"pointer",
+                border: bucket === key ? `1.5px solid ${BRAND}` : `1px solid ${T.inputBrd}`,
+                background: bucket === key ? BRAND_SOFT : T.inputBg,
               }}
             >
-              <div style={{ fontSize:13, fontWeight:600, color:T.text }}>{label}</div>
+              <div style={{ fontSize:13, fontWeight:600, color: bucket === key ? BRAND_DARK : T.text }}>{label}</div>
               <div style={{ fontSize:10, color:T.textSub, marginTop:2, lineHeight:1.4 }}>{desc}</div>
               <div style={{ fontSize:13, fontWeight:700, color:BRAND_DARK, marginTop:6 }}>{fmt(bal)}</div>
             </button>
@@ -3778,14 +3772,14 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
         </div>
 
         {pending && (
-          <div style={{ background: dark ? "#142e20" : "#E1F5EE", borderRadius:10, padding:"10px 14px", marginBottom:16 }}>
-            <div style={{ fontSize:12, color:BRAND_DARK, marginBottom:8 }}>
-              🎯 You've also got <strong>{fmt(pending.amount)}</strong> from a plan still growing — invite {pending.count} referral{pending.count > 1 ? "s" : ""}{pending.minAmount > 0 ? ` with a plan ≥ ${fmt(pending.minAmount)}` : ""} to add it here too (you're at {pending.have} of {pending.count}){pending.otherCount > 0 ? `, plus ${pending.otherCount} more plan${pending.otherCount > 1 ? "s" : ""} in the same boat` : ""}.
+          <div style={{ background: dark ? "#0F2018" : "#F7F8F7", border:`1px solid ${T.border}`, borderRadius:10, padding:"10px 14px", marginBottom:16 }}>
+            <div style={{ fontSize:12, color:T.text, marginBottom:8 }}>
+              You've also got <strong>{fmt(pending.amount)}</strong> from a plan still growing — invite {pending.count} referral{pending.count > 1 ? "s" : ""}{pending.minAmount > 0 ? ` with a plan ≥ ${fmt(pending.minAmount)}` : ""} to add it here too (you're at {pending.have} of {pending.count}){pending.otherCount > 0 ? `, plus ${pending.otherCount} more plan${pending.otherCount > 1 ? "s" : ""} in the same boat` : ""}.
             </div>
             <button
               onClick={handleAddToPrincipal}
               disabled={addingToPrincipal}
-              style={{ width:"100%", border:`0.5px solid ${T.inputBrd}`, borderRadius:8, padding:"8px 0", fontSize:12, fontWeight:700,
+              style={{ width:"100%", border:`1px solid ${T.inputBrd}`, borderRadius:8, padding:"8px 0", fontSize:12, fontWeight:700,
                 background:"transparent", color:BRAND_DARK, cursor: addingToPrincipal ? "default" : "pointer", opacity: addingToPrincipal ? 0.7 : 1 }}
             >
               {addingToPrincipal ? "Adding..." : "Prefer it sooner? Add to principal instead"}
@@ -3794,19 +3788,19 @@ function WithdrawModal({ profile, settings, investments, userId, kycSubmission, 
         )}
 
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>Amount (UGX)</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(min)}`} value={amount} onChange={e => setAmount(e.target.value)} />
+        <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text }} type="number" placeholder={`Min ${fmt(min)}`} value={amount} onChange={e => setAmount(e.target.value)} />
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Method</label>
-        <select style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
+        <select style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text }} value={method} onChange={e => setMethod(e.target.value)}>
           <option value="mtn">MTN Mobile Money</option>
           <option value="airtel">Airtel Money</option>
         </select>
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500, marginTop:14 }}>Mobile money number</label>
-        <input style={{ width:"100%", padding:"11px 14px", border:`0.5px solid ${T.inputBrd}`, borderRadius:10, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
-        <button style={{ ...S.primaryBtn, marginTop:14, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
-          {loading ? "Submitting..." : "Request withdrawal →"}
+        <input style={{ width:"100%", padding:"11px 14px", border:`1px solid ${T.inputBrd}`, borderRadius:9, fontSize:14, background:T.inputBg, color:T.text }} type="tel" placeholder="0700 000 000" value={phone} onChange={e => setPhone(e.target.value)} />
+        <button style={{ ...S.primaryBtn, marginTop:14, padding:"12px 0" }} onClick={handleSubmit} disabled={loading}>
+          {loading ? "Submitting..." : "Request withdrawal"}
         </button>
         <p style={{ fontSize:11, color:T.textSub, textAlign:"center", marginTop:12 }}>
-          💡 Withdrawals available 7:00 AM – 7:00 PM daily. Principal and deposits can't be withdrawn — reinvest them into a plan instead.
+          Withdrawals available 7:00 AM – 7:00 PM daily. Principal and deposits can't be withdrawn — reinvest them into a plan instead.
         </p>
         </>}
       </div>
@@ -3861,9 +3855,9 @@ function KycModal({ kycSubmission, onClose, onSubmit, dark }) {
   if (status === "pending" || status === "approved") {
     return (
       <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
-        <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"28px 20px 40px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
-          <div style={{ fontSize:40, marginBottom:10 }}>{status === "approved" ? "✅" : "⏳"}</div>
-          <div style={{ fontWeight:700, fontSize:16, color:T.text, marginBottom:6 }}>
+        <div style={{ background:T.card, borderRadius:"16px 16px 0 0", padding:"26px 20px 36px", width:"100%", maxWidth:480, textAlign:"center", animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
+          <div style={{ width:44, height:44, borderRadius:"50%", background: status === "approved" ? BRAND_SOFT : (dark ? "#0F2018" : "#F7F8F7"), display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px", color: status === "approved" ? BRAND_DARK : T.textSub, fontWeight:700, fontSize:18 }}>{status === "approved" ? "✓" : "…"}</div>
+          <div style={{ fontWeight:700, fontSize:15, fontFamily:"'Sora',sans-serif", color:T.text, marginBottom:6 }}>
             {status === "approved" ? "Your ID is verified" : "Verification in progress"}
           </div>
           <div style={{ fontSize:13, color:T.textSub, marginBottom:20, lineHeight:1.6 }}>
@@ -3877,9 +3871,9 @@ function KycModal({ kycSubmission, onClose, onSubmit, dark }) {
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200 }} onClick={onClose}>
-      <div style={{ background:T.card, borderRadius:"24px 24px 0 0", padding:"24px 20px 36px", width:"100%", maxWidth:480, maxHeight:"88vh", overflowY:"auto", animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
+      <div style={{ background:T.card, borderRadius:"16px 16px 0 0", padding:"22px 20px 32px", width:"100%", maxWidth:480, maxHeight:"88vh", overflowY:"auto", animation:"slideUp 0.25s ease" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-          <div style={{ fontWeight:700, fontSize:18, color:T.text }}>Verify your ID</div>
+          <div style={{ fontWeight:700, fontSize:16, fontFamily:"'Sora',sans-serif", color:T.text }}>Verify your ID</div>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:T.textSub }}>×</button>
         </div>
         <div style={{ fontSize:12, color:T.textSub, marginBottom:16, lineHeight:1.5 }}>
@@ -3887,17 +3881,17 @@ function KycModal({ kycSubmission, onClose, onSubmit, dark }) {
         </div>
 
         {status === "rejected" && (
-          <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:12, marginBottom:14 }}>
+          <div style={{ background:"#F7E9E7", color:"#8A362F", borderRadius:8, padding:"10px 14px", fontSize:12, marginBottom:14 }}>
             Your last submission was rejected{kycSubmission?.rejection_reason ? `: ${kycSubmission.rejection_reason}` : "."} Please try again with clearer photos.
           </div>
         )}
-        {err && <div style={{ background:"#FAECE7", color:"#993C1D", borderRadius:10, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
+        {err && <div style={{ background:"#F7E9E7", color:"#8A362F", borderRadius:8, padding:"10px 14px", fontSize:13, marginBottom:12 }}>{err}</div>}
 
         <label style={{ display:"block", fontSize:11, color:T.textSub, marginBottom:6, fontWeight:500 }}>ID type</label>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
-          {[["national_id","🪪 National ID"],["passport","📔 Passport"]].map(([key,label]) => (
+          {[["national_id","National ID"],["passport","Passport"]].map(([key,label]) => (
             <button key={key} onClick={() => setIdType(key)}
-              style={{ padding:"12px 10px", borderRadius:10, border:`1.5px solid ${idType === key ? BRAND : T.border}`, background: idType === key ? "#E1F5EE" : T.bg, color: idType === key ? BRAND_DARK : T.text, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+              style={{ padding:"11px 10px", borderRadius:9, border:`1.5px solid ${idType === key ? BRAND : T.border}`, background: idType === key ? BRAND_SOFT : T.bg, color: idType === key ? BRAND_DARK : T.text, fontSize:13, fontWeight:600, cursor:"pointer" }}>
               {label}
             </button>
           ))}
@@ -3906,8 +3900,8 @@ function KycModal({ kycSubmission, onClose, onSubmit, dark }) {
         <UploadBox label="Front of ID" data={front} name={frontName} onPick={f => readFile(f, setFront, setFrontName)} />
         <UploadBox label="Back of ID" data={back} name={backName} onPick={f => readFile(f, setBack, setBackName)} />
 
-        <button style={{ ...S.primaryBtn, marginTop:6, padding:"13px 0" }} onClick={handleSubmit} disabled={loading}>
-          {loading ? "Submitting..." : "Submit for review →"}
+        <button style={{ ...S.primaryBtn, marginTop:6, padding:"12px 0" }} onClick={handleSubmit} disabled={loading}>
+          {loading ? "Submitting..." : "Submit for review"}
         </button>
       </div>
     </div>
@@ -3921,15 +3915,70 @@ function ReferralTab({ profile, referrals, settings, dark }) {
   const ref2 = settings.ref2_rate ?? 5;  // % of plan amount, paid to referrer's referrer
   const code = profile?.referral_code ?? "—";
   const link = `${window.location.origin}?ref=${code}`;
-  const [copied, setCopied] = useState(false);
-  const copy = () => { navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
+
+  // Daily earning potential varies a lot by plan (task reward × tasks/day),
+  // so pull the real low/high from VAULT_PLANS instead of quoting one fixed
+  // number that's only true for some tiers.
+  const lowPlan  = VAULT_PLANS[0];
+  const highPlan = VAULT_PLANS[VAULT_PLANS.length - 1];
+  const dailyEarning = p => p.taskReward * p.dailyTasks;
+
+  // Pitch message used when sharing — this is the thing that actually gets
+  // pasted into WhatsApp/SMS/etc., so it's plain persuasive copy rather than
+  // matching the app's own UI tone.
+  const shareMessage =
+`I've been earning on EarnNet just by completing simple daily tasks on my phone — no experience needed.
+
+Earnings depend on your plan: about ${fmt(dailyEarning(lowPlan))}/day on the ${lowPlan.name} plan, up to ${fmt(dailyEarning(highPlan))}+/day on the ${highPlan.name} plan. Bigger plan, bigger daily payout.
+
+Join with my link and start today:
+${link}
+
+Referral code: ${code}`;
+
+  const [copied, setCopied] = useState(""); // "" | "message" | "link"
+  const copyText = (text, which) => {
+    navigator.clipboard.writeText(text).then(() => { setCopied(which); setTimeout(() => setCopied(""), 2000); });
+  };
+  const handleShare = () => {
+    if (navigator.share) {
+      navigator.share({ text: shareMessage }).catch(() => {});
+    } else {
+      copyText(shareMessage, "message");
+    }
+  };
 
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
-      <div style={{ background:`linear-gradient(135deg,${BG_DARK} 0%,${BRAND_DARK} 100%)`, color:"white", margin:16, borderRadius:20, padding:"24px 22px", boxShadow:"0 8px 32px rgba(15,46,34,0.35)" }}>
+      <div style={{ background:BRAND_DARK, color:"white", margin:16, borderRadius:12, padding:"20px 20px", boxShadow:"none" }}>
         <div style={{ fontSize:14, opacity:0.8, marginBottom:4 }}>Your referral code</div>
         <div style={{ fontFamily:"'Sora',sans-serif", fontSize:36, fontWeight:700, letterSpacing:4, marginBottom:16 }}>{code}</div>
-        <button style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={copy}>{copied ? "Link copied! ✓" : "Copy referral link 🔗"}</button>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <button style={{ background:BRAND, color:"white", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={handleShare}>
+            {copied === "message" ? "Copied!" : "Share invite message"}
+          </button>
+          <button style={{ background:"rgba(255,255,255,0.14)", color:"white", border:"1px solid rgba(255,255,255,0.25)", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }} onClick={() => copyText(link, "link")}>
+            {copied === "link" ? "Copied!" : "Copy link only"}
+          </button>
+        </div>
+      </div>
+
+      {/* Preview of the message people will get — lets the user see and
+          edit expectations before sending it out. */}
+      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"14px 16px", margin:"0 16px 16px", boxShadow:"none" }}>
+        <div style={{ fontWeight:600, fontSize:13, color:T.text, marginBottom:8 }}>What they'll receive</div>
+        <div style={{ background: dark ? "#0F2018" : "#F7F8F7", border:`1px solid ${T.border}`, borderRadius:9, padding:"12px 14px", fontSize:12.5, color:T.text, whiteSpace:"pre-wrap", lineHeight:1.6, marginBottom:12 }}>
+          {shareMessage}
+        </div>
+        <div style={{ fontSize:11, color:T.textSub, marginBottom:8 }}>Daily earning by plan (task reward × tasks/day)</div>
+        <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(VAULT_PLANS.length, 4)}, 1fr)`, gap:6 }}>
+          {[VAULT_PLANS[0], VAULT_PLANS[Math.floor((VAULT_PLANS.length - 1) / 2)], VAULT_PLANS[VAULT_PLANS.length - 1]].map(p => (
+            <div key={p.level} style={{ textAlign:"center", background: dark ? "#0F2018" : "#F7F8F7", borderRadius:8, padding:"9px 4px" }}>
+              <div style={{ fontSize:9, color:T.textSub, marginBottom:3 }}>{p.name}</div>
+              <div style={{ fontWeight:700, fontSize:12, color:T.text }}>{fmt(dailyEarning(p))}/day</div>
+            </div>
+          ))}
+        </div>
       </div>
       <div style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 16px 16px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
         <div style={{ fontWeight:600, fontSize:14, marginBottom:4, color:T.text }}>Commission rates</div>
@@ -3978,40 +4027,42 @@ function ProfileTab({ profile, investments, onSignOut, onActivate, onDeposit, da
   const tierInfo = getActiveTier(investments);
   return (
     <div style={{ animation:"slideUp 0.3s ease", paddingBottom:20 }}>
-      <div style={{ background:`linear-gradient(135deg,${BG_DARK} 0%,${BRAND_DARK} 100%)`, color:"white", margin:16, borderRadius:20, padding:"32px 24px", textAlign:"center", boxShadow:"0 8px 32px rgba(15,46,34,0.35)" }}>
-        <div style={{ width:72, height:72, borderRadius:"50%", background:"rgba(255,255,255,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, fontWeight:700, margin:"0 auto 14px", border:"3px solid rgba(255,255,255,0.4)" }}>
+      <div style={{ background:BRAND_DARK, color:"white", margin:16, borderRadius:12, padding:"26px 22px", textAlign:"center", boxShadow:"none" }}>
+        <div style={{ width:60, height:60, borderRadius:"50%", background:"rgba(255,255,255,0.14)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, fontWeight:700, margin:"0 auto 12px", border:"1px solid rgba(255,255,255,0.3)" }}>
           {profile?.initials ?? "?"}
         </div>
-        <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:22 }}>{profile?.name}</div>
-        <div style={{ fontSize:13, opacity:0.75, marginTop:4 }}>{profile?.phone}</div>
+        <div style={{ fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:18 }}>{profile?.name}</div>
+        <div style={{ fontSize:12, opacity:0.7, marginTop:4 }}>{profile?.phone}</div>
         <div style={{ marginTop:12, display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap" }}>
-          {profile?.kyc_verified && <div style={{ background:"rgba(255,255,255,0.15)", borderRadius:20, padding:"4px 14px", fontSize:11 }}>✓ Verified</div>}
+          {profile?.kyc_verified && <div style={{ background:"rgba(255,255,255,0.12)", border:"1px solid rgba(255,255,255,0.25)", borderRadius:7, padding:"4px 12px", fontSize:11 }}>Verified</div>}
           {profile?.activated
-            ? <div style={{ background:"rgba(29,158,117,0.3)", borderRadius:20, padding:"4px 14px", fontSize:11 }}>⚡ Activated</div>
-            : <button onClick={onActivate} style={{ background:"#FAEEDA", color:"#854F0B", border:"none", borderRadius:20, padding:"4px 14px", fontSize:11, fontWeight:600, cursor:"pointer" }}>⚡ Not activated</button>}
+            ? <div style={{ background:"rgba(255,255,255,0.12)", border:"1px solid rgba(255,255,255,0.25)", borderRadius:7, padding:"4px 12px", fontSize:11 }}>Activated</div>
+            : <button onClick={onActivate} style={{ background:"transparent", color:"white", border:"1px solid rgba(255,255,255,0.4)", borderRadius:7, padding:"4px 12px", fontSize:11, fontWeight:600, cursor:"pointer" }}>Not activated</button>}
         </div>
       </div>
       <div style={{ padding:"0 16px" }}>
-        {[
-          { label:"Member since",    value: profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : "—" },
-          { label:"Total earned",    value: fmt(profile?.total_earned) },
-          { label:"Tasks completed", value: profile?.tasks_done ?? 0 },
-          { label:"VIP Tier",        value: tierInfo?.label ?? "🔒 None yet" },
-          { label:"Total invested",  value: fmt(profile?.total_invested) },
-          { label:"Referral code",   value: profile?.referral_code ?? "—" },
-          { label:"Account status",  value: profile?.activated ? "⚡ Activated" : "⏳ Not activated" },
-          { label:"KYC status",      value: profile?.kyc_verified ? "✓ Verified" : "⏳ Pending" },
-        ].map(row => (
-          <div key={row.label} style={{ background:T.card, borderRadius:14, padding:"14px 16px", margin:"0 0 10px", boxShadow:"0 1px 4px rgba(0,0,0,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <span style={{ fontSize:13, color:T.textSub }}>{row.label}</span>
-            <span style={{ fontWeight:600, fontSize:13, color:T.text }}>{row.value}</span>
-          </div>
-        ))}
+        <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"4px 15px", marginBottom:14, boxShadow:"none" }}>
+          {[
+            { label:"Member since",    value: profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : "—" },
+            { label:"Total earned",    value: fmt(profile?.total_earned) },
+            { label:"Tasks completed", value: profile?.tasks_done ?? 0 },
+            { label:"VIP tier",        value: tierInfo?.label ?? "None yet" },
+            { label:"Total invested",  value: fmt(profile?.total_invested) },
+            { label:"Referral code",   value: profile?.referral_code ?? "—" },
+            { label:"Account status",  value: profile?.activated ? "Activated" : "Not activated" },
+            { label:"KYC status",      value: profile?.kyc_verified ? "Verified" : "Pending" },
+          ].map((row, i, arr) => (
+            <div key={row.label} style={{ padding:"11px 0", borderBottom: i === arr.length - 1 ? "none" : `1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ fontSize:12, color:T.textSub }}>{row.label}</span>
+              <span style={{ fontWeight:600, fontSize:13, color:T.text }}>{row.value}</span>
+            </div>
+          ))}
+        </div>
         {!profile?.activated && (
-          <button style={{ ...S.primaryBtn, marginBottom:10, background:"#854F0B", padding:"13px 0" }} onClick={onActivate}>⚡ Activate account</button>
+          <button style={{ ...S.primaryBtn, marginBottom:10, background:GOLD, padding:"12px 0" }} onClick={onActivate}>Activate account</button>
         )}
-        <button style={{ ...S.primaryBtn, marginBottom:10, padding:"13px 0" }} onClick={onDeposit}>💳 Deposit funds</button>
-        <button style={{ ...S.primaryBtn, background:"#FAECE7", color:"#993C1D", padding:"13px 0" }} onClick={onSignOut}>Sign out</button>
+        <button style={{ ...S.primaryBtn, marginBottom:10, padding:"12px 0" }} onClick={onDeposit}>Deposit funds</button>
+        <button style={{ ...S.primaryBtn, background:"transparent", border:`1px solid ${DANGER}`, color:DANGER, padding:"12px 0" }} onClick={onSignOut}>Sign out</button>
       </div>
     </div>
   );
@@ -4019,6 +4070,8 @@ function ProfileTab({ profile, investments, onSignOut, onActivate, onDeposit, da
 
 // ── Shared style constants ─────────────────────────────────────
 const S = {
-  logoMark:   { width:40, height:40, borderRadius:12, background:BRAND, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:20, color:"white", flexShrink:0 },
-  primaryBtn: { display:"block", padding:"12px 24px", background:BRAND, color:"white", border:"none", borderRadius:12, fontSize:14, fontWeight:600, cursor:"pointer", width:"100%" },
+  logoMark:   { width:36, height:36, borderRadius:9, background:BRAND, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Sora',sans-serif", fontWeight:700, fontSize:17, color:"white", flexShrink:0 },
+  primaryBtn: { display:"block", padding:"12px 24px", background:BRAND, color:"white", border:"none", borderRadius:10, fontSize:14, fontWeight:600, cursor:"pointer", width:"100%" },
+  card:       { borderRadius:12, border:"1px solid", boxShadow:"none" },
+  sectionLabel: { fontFamily:"'Sora',sans-serif", fontWeight:600, fontSize:12, letterSpacing:"0.03em", textTransform:"uppercase" },
 };
