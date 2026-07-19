@@ -697,7 +697,6 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   const [kycSubmission, setKycSubmission] = useState(null); // latest kyc_submissions row, or null
   const [selectedTask, setSelectedTask]   = useState(null);
   const [notifOpen, setNotifOpen]         = useState(false);
-  const [confirmClearNotifs, setConfirmClearNotifs] = useState(false);
   const uid = session.user.id;
   const T   = theme(dark);
   const readNotifKey = `earnnet_read_notifs_${uid}`;
@@ -712,16 +711,23 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
   // Derive notifications from transactions — hide anything at/before the
   // last "Clear all" cutoff (a local dismissal, not a deletion of the
   // underlying transaction — that record still lives in Wallet history).
-  const notifications = txns
-    .filter(tx => new Date(tx.created_at).getTime() > notifClearedAt)
+  // Sorted newest-first and ids normalized to strings so the read/cleared
+  // sets always match regardless of whether Supabase returns tx.id as a
+  // number or a uuid string.
+  const notifications = [...txns]
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .filter(tx => {
+      const t = new Date(tx.created_at).getTime();
+      return !Number.isNaN(t) && t > notifClearedAt;
+    })
     .slice(0, 5)
     .map(tx => ({
-    id: tx.id,
+    id: String(tx.id),
     icon: tx.type === "task" ? "✅" : tx.type === "referral" ? "👥" : tx.type === "bonus" ? "🎁" : tx.type === "streak" ? "🔥" : "💸",
     title: tx.description ?? tx.type,
     amount: tx.amount,
     time: new Date(tx.created_at).toLocaleDateString(),
-    read: readNotifIds.has(tx.id),
+    read: readNotifIds.has(String(tx.id)),
   }));
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -729,12 +735,14 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
     const now = Date.now();
     setNotifClearedAt(now);
     try { localStorage.setItem(notifClearedKey, String(now)); } catch {}
+    showToast("Notifications cleared");
   };
 
   const markAllNotifsRead = () => {
     const ids = new Set([...readNotifIds, ...notifications.map(n => n.id)]);
     setReadNotifIds(ids);
     try { localStorage.setItem(readNotifKey, JSON.stringify([...ids])); } catch {}
+    showToast("All marked as read");
   };
 
   const showToast = (msg, type = "success") => {
@@ -977,13 +985,10 @@ function MainApp({ session, profile, settings, refreshProfile, dark, toggleDark 
                       Mark all as read
                     </button>
                     <button
-                      onClick={() => {
-                        if (confirmClearNotifs) { clearAllNotifs(); setConfirmClearNotifs(false); }
-                        else { setConfirmClearNotifs(true); setTimeout(() => setConfirmClearNotifs(false), 3000); }
-                      }}
+                      onClick={clearAllNotifs}
                       disabled={notifications.length === 0}
                       style={{ background:"none", border:"none", color: notifications.length === 0 ? T.textSub : DANGER, fontSize:11, fontWeight:600, cursor: notifications.length === 0 ? "default" : "pointer", padding:0 }}>
-                      {confirmClearNotifs ? "Tap to confirm" : "Clear all"}
+                      Clear all
                     </button>
                   </div>
                 </div>
